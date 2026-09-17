@@ -2,6 +2,7 @@ from pathlib import Path
 
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.semantic import MetadataEditor
+from onec_harness.semantic_extra import ExtendedMetadataEditor
 from onec_harness.workspace import Workspace
 
 
@@ -61,3 +62,58 @@ def test_create_document_can_allow_posting(tmp_path: Path) -> None:
     text = workspace.read_text("Documents/Заявка.xml")
     assert "<Posting>Allow</Posting>" in text
     assert "<Document>Заявка</Document>" in workspace.read_text("Configuration.xml")
+
+
+def test_create_enum_with_values_is_indexed(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = ExtendedMetadataEditor(workspace)
+
+    change = editor.create_enum("Статусы", values=["Новый", {"name": "Закрыт", "synonym": "Закрыт"}])
+
+    text = workspace.read_text("Enums/Статусы.xml")
+    assert "<Enum " in text
+    assert "<Name>Новый</Name>" in text
+    assert "<Name>Закрыт</Name>" in text
+    assert "<Enum>Статусы</Enum>" in workspace.read_text("Configuration.xml")
+    assert change.snapshot_id
+    index = ConfigurationIndex.build(tmp_path)
+    assert any(item.kind == "enum" and item.name == "Статусы" for item in index.objects)
+
+
+def test_add_enum_value(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = ExtendedMetadataEditor(workspace)
+    editor.create_enum("Статусы", values=["Новый"])
+
+    editor.add_enum_value("Статусы", "Отменен", synonym="Отменен")
+
+    text = workspace.read_text("Enums/Статусы.xml")
+    assert "<Name>Отменен</Name>" in text
+
+
+def test_add_typed_tabular_section_to_document(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = ExtendedMetadataEditor(workspace)
+    editor.create_document("Заявка")
+
+    change = editor.add_tabular_section(
+        "document",
+        "Заявка",
+        "Товары",
+        columns=[
+            {"name": "Товар", "value_type": "CatalogRef.Товары"},
+            {"name": "Количество", "value_type": "number", "digits": 15, "fraction_digits": 3},
+        ],
+    )
+
+    text = workspace.read_text("Documents/Заявка.xml")
+    assert "DocumentTabularSection.Заявка.Товары" in text
+    assert "DocumentTabularSectionRow.Заявка.Товары" in text
+    assert "<Name>Товар</Name>" in text
+    assert "cfg:CatalogRef.Товары" in text
+    assert "<Name>Количество</Name>" in text
+    assert "<v8:FractionDigits>3</v8:FractionDigits>" in text
+    assert change.snapshot_id
