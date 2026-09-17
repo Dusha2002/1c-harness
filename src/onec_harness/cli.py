@@ -14,10 +14,12 @@ from onec_harness.agent import HarnessAgent
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.onec.com import ComConnector, ComConnectorError
 from onec_harness.onec.designer import CommandResult, Designer, DesignerError
+from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler, TestClientError, TestClientLauncher
 from onec_harness.providers.base import Message, ProviderError
 from onec_harness.providers.factory import create_provider
-from onec_harness.semantic import MetadataEditor, SemanticMetadataError
+from onec_harness.semantic import SemanticMetadataError
+from onec_harness.semantic_extra import ExtendedMetadataEditor
 from onec_harness.settings import Settings
 from onec_harness.snapshots import SnapshotError, SnapshotStore
 from onec_harness.workspace import Workspace, WorkspaceError
@@ -58,6 +60,7 @@ def _agent_payload(result: Any) -> dict[str, Any]:
         "summary": result.summary,
         "snapshots": result.snapshots,
         "checks_ok": result.checks_ok,
+        "ui_test_ok": result.ui_test_ok,
         "steps": [{"tool": step.tool, "args": step.args, "result": step.result} for step in result.steps],
     }
 
@@ -68,14 +71,35 @@ def _require_yes(yes: bool, message: str) -> None:
         raise typer.Exit(2)
 
 
-def _json_object(raw: str, label: str) -> dict[str, Any]:
+def _json_value(raw: str, label: str) -> Any:
     try:
-        value = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(f"{label} must be valid JSON: {exc}") from exc
+
+
+def _json_object(raw: str, label: str) -> dict[str, Any]:
+    value = _json_value(raw, label)
     if not isinstance(value, dict):
         raise typer.BadParameter(f"{label} must be a JSON object")
     return value
+
+
+def _json_array(raw: str, label: str) -> list[Any]:
+    value = _json_value(raw, label)
+    if not isinstance(value, list):
+        raise typer.BadParameter(f"{label} must be a JSON array")
+    return value
+
+
+def _scenario_actions(path: Path) -> list[dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"Cannot read scenario JSON: {exc}") from exc
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise typer.BadParameter("Scenario JSON must be an array of action objects")
+    return raw
 
 
 def _csv(value: str) -> list[str]:
@@ -96,6 +120,8 @@ def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
     else:
         credentials_ok = bool(settings.llm_api_key)
     com_configured = ComConnector(settings).configured
+    test_client_ready = bool(settings.onec_test_client_connection or settings.onec_staging_ib_connection)
+    e2e_ready = bool(settings.onec_staging_ib_connection and settings.onec_test_manager_connection and test_client_ready)
 
     payload = {
         "llm_provider": settings.llm_provider,
@@ -106,8 +132,9 @@ def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
         "staging_connection": bool(settings.onec_staging_ib_connection),
         "com_configured": com_configured,
         "runtime_writes": settings.onec_runtime_allow_writes,
-        "test_client_connection": bool(settings.onec_test_client_connection or settings.onec_staging_ib_connection),
+        "test_client_connection": test_client_ready,
         "test_manager_connection": bool(settings.onec_test_manager_connection),
+        "e2e_ui_testing": e2e_ready,
         "test_port": settings.onec_test_port,
         "workspace": str(settings.onec_workspace.expanduser().resolve()),
     }
@@ -125,8 +152,9 @@ def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
     table.add_row("Staging infobase", "configured" if settings.onec_staging_ib_connection else "missing")
     table.add_row("COM runtime", "configured" if com_configured else "missing")
     table.add_row("Runtime writes", "enabled" if settings.onec_runtime_allow_writes else "disabled")
-    table.add_row("Test Client", "configured" if payload["test_client_connection"] else "missing")
+    table.add_row("Test Client", "configured" if test_client_ready else "missing")
     table.add_row("Test Manager", "configured" if settings.onec_test_manager_connection else "missing")
+    table.add_row("E2E UI runner", "ready" if e2e_ready else "missing configuration")
     table.add_row("Workspace", payload["workspace"])
     console.print(table)
 
@@ -161,6 +189,7 @@ def agent(
     task: str,
     write: bool = typer.Option(False, "--write", help="Allow snapshotted source/metadata changes"),
     check: bool = typer.Option(False, "--check", help="Load changes into staging and validate with 1C Designer"),
+    ui_test: bool = typer.Option(False, "--ui-test", help="Allow real Test Client/Test Manager E2E execution"),
     runtime_write: bool = typer.Option(False, "--runtime-write", help="Allow explicitly enabled COM runtime mutations"),
     max_steps: int = typer.Option(24, "--max-steps", min=1, max=80),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output for desktop/MCP clients"),
@@ -170,6 +199,27 @@ def agent(
     workspace = _workspace(settings)
     if check and not settings.onec_staging_ib_connection.strip():
         message = "--check requires ONEC_STAGING_IB_CONNECTION; autonomous checks never load into the primary infobase"
+        if json_output:
+            typer.echo(json.dumps({"error": message}, ensure_ascii=False))
+        else:
+            console.print(f"[red]{message}[/red]")
+        raise typer.Exit(2)
+    if ui_test and write and not check:
+        message = "--ui-test with --write requires --check so changed sources can be staged safely before execution"
+        if json_output:
+            typer.echo(json.dumps({"error": message}, ensure_ascii=False))
+        else:
+            console.print(f"[red]{message}[/red]")
+        raise typer.Exit(2)
+    if ui_test and not settings.onec_test_manager_connection.strip():
+        message = "--ui-test requires ONEC_TEST_MANAGER_CONNECTION"
+        if json_output:
+            typer.echo(json.dumps({"error": message}, ensure_ascii=False))
+        else:
+            console.print(f"[red]{message}[/red]")
+        raise typer.Exit(2)
+    if ui_test and not settings.onec_staging_ib_connection.strip():
+        message = "--ui-test requires ONEC_STAGING_IB_CONNECTION to build the generated runner EPF safely"
         if json_output:
             typer.echo(json.dumps({"error": message}, ensure_ascii=False))
         else:
@@ -185,21 +235,20 @@ def agent(
 
     async def run():
         provider = create_provider(settings)
-        designer = (
-            Designer(settings, connection_override=settings.onec_staging_ib_connection)
-            if check
-            else None
-        )
+        designer = Designer(settings, connection_override=settings.onec_staging_ib_connection) if check else None
         runtime = ComConnector(settings, allow_writes=runtime_write and settings.onec_runtime_allow_writes)
         compiler = ScenarioCompiler(settings.onec_test_host, settings.onec_test_port)
+        runner = TestManagerRunner(settings, workspace) if ui_test else None
         harness = HarnessAgent(
             provider,
             workspace,
             designer=designer,
             runtime=runtime,
             scenario_compiler=compiler,
+            test_runner=runner,
             allow_writes=write,
             execute_checks=check,
+            execute_ui_tests=ui_test,
             allow_runtime_writes=runtime_write,
         )
         return await harness.run(task, max_steps=max_steps)
@@ -238,6 +287,8 @@ def agent(
     console.print(result.summary)
     if result.snapshots:
         console.print(f"[dim]Snapshots: {', '.join(result.snapshots)}[/dim]")
+    if result.ui_test_ok is not None:
+        console.print(f"[bold]UI E2E:[/bold] {'OK' if result.ui_test_ok else 'FAILED'}")
     if not write:
         console.print("[yellow]Read-only source mode: patches were not permitted.[/yellow]")
 
@@ -264,7 +315,11 @@ def create_catalog(
     """Create catalog metadata in the local exported workspace."""
     _require_yes(yes, "Metadata creation")
     try:
-        change = MetadataEditor(_workspace(_settings())).create_catalog(name, synonym=synonym, hierarchical=hierarchical)
+        change = ExtendedMetadataEditor(_workspace(_settings())).create_catalog(
+            name,
+            synonym=synonym,
+            hierarchical=hierarchical,
+        )
         console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
     except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
         console.print(f"[red]{exc}[/red]")
@@ -281,7 +336,44 @@ def create_document_meta(
     """Create document metadata in the local exported workspace."""
     _require_yes(yes, "Metadata creation")
     try:
-        change = MetadataEditor(_workspace(_settings())).create_document(name, synonym=synonym, posting=posting)
+        change = ExtendedMetadataEditor(_workspace(_settings())).create_document(name, synonym=synonym, posting=posting)
+        console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
+    except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@app.command("create-enum")
+def create_enum(
+    name: str,
+    values: str = typer.Option("[]", "--values", help="JSON array of names or {name,synonym} objects"),
+    synonym: str | None = None,
+    yes: bool = typer.Option(False, "--yes"),
+) -> None:
+    """Create an enumeration with optional values in the local workspace."""
+    _require_yes(yes, "Metadata creation")
+    raw_values = _json_array(values, "values")
+    if not all(isinstance(item, (str, dict)) for item in raw_values):
+        raise typer.BadParameter("values entries must be strings or objects")
+    try:
+        change = ExtendedMetadataEditor(_workspace(_settings())).create_enum(name, synonym=synonym, values=raw_values)
+        console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
+    except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@app.command("add-enum-value")
+def add_enum_value(
+    enum_name: str,
+    name: str,
+    synonym: str | None = None,
+    yes: bool = typer.Option(False, "--yes"),
+) -> None:
+    """Add one value to an existing enumeration."""
+    _require_yes(yes, "Metadata change")
+    try:
+        change = ExtendedMetadataEditor(_workspace(_settings())).add_enum_value(enum_name, name, synonym=synonym)
         console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
     except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
         console.print(f"[red]{exc}[/red]")
@@ -301,13 +393,41 @@ def add_attribute(
     """Add a typed attribute to a catalog/document in the local workspace."""
     _require_yes(yes, "Metadata change")
     try:
-        change = MetadataEditor(_workspace(_settings())).add_attribute(
+        change = ExtendedMetadataEditor(_workspace(_settings())).add_attribute(
             kind,
             object_name,
             name,
             value_type=value_type,
             synonym=synonym,
             string_length=string_length,
+        )
+        console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
+    except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@app.command("add-tabular-section")
+def add_tabular_section(
+    kind: str,
+    object_name: str,
+    name: str,
+    columns: str = typer.Option("[]", "--columns", help="JSON array of typed column objects"),
+    synonym: str | None = None,
+    yes: bool = typer.Option(False, "--yes"),
+) -> None:
+    """Add a typed tabular section to a catalog/document."""
+    _require_yes(yes, "Metadata change")
+    raw_columns = _json_array(columns, "columns")
+    if not all(isinstance(item, dict) for item in raw_columns):
+        raise typer.BadParameter("columns entries must be JSON objects")
+    try:
+        change = ExtendedMetadataEditor(_workspace(_settings())).add_tabular_section(
+            kind,
+            object_name,
+            name,
+            synonym=synonym,
+            columns=raw_columns,
         )
         console.print(f"{change.summary}\nSnapshot: {change.snapshot_id}")
     except (SemanticMetadataError, SnapshotError, WorkspaceError, OSError) as exc:
@@ -407,9 +527,7 @@ def runtime_create_catalog_item(
 def compile_test_scenario(actions_file: Path, output: Path | None = None) -> None:
     """Compile JSON UI actions to Test Manager BSL without executing them."""
     try:
-        raw = json.loads(actions_file.read_text(encoding="utf-8"))
-        if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
-            raise TestClientError("Scenario JSON must be an array of action objects")
+        raw = _scenario_actions(actions_file)
         settings = _settings()
         compiler = ScenarioCompiler(settings.onec_test_host, settings.onec_test_port)
         content = compiler.compile(raw)
@@ -419,8 +537,47 @@ def compile_test_scenario(actions_file: Path, output: Path | None = None) -> Non
             console.print(str(output))
         else:
             console.print(content)
-    except (OSError, json.JSONDecodeError, TestClientError) as exc:
+    except (OSError, TestClientError, typer.BadParameter) as exc:
         console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@app.command("run-test-scenario")
+def run_test_scenario(
+    actions_file: Path,
+    execute: bool = typer.Option(False, "--execute"),
+    yes: bool = typer.Option(False, "--yes"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Build a temporary runner EPF and execute a real Test Client/Test Manager E2E scenario."""
+    if execute:
+        _require_yes(yes, "E2E test execution")
+    try:
+        actions = _scenario_actions(actions_file)
+        settings = _settings()
+        result = TestManagerRunner(settings, _workspace(settings)).run(actions, execute=execute)
+        payload = result.as_dict()
+        if json_output:
+            typer.echo(json.dumps(payload, ensure_ascii=False, default=str))
+        else:
+            table = Table(title=f"E2E scenario {result.run_id}")
+            table.add_column("Field")
+            table.add_column("Value")
+            table.add_row("Status", result.status)
+            table.add_row("Success", str(result.success))
+            table.add_row("Duration", f"{result.duration_seconds:.2f}s")
+            table.add_row("EPF", str(result.artifacts.epf_path))
+            table.add_row("Result", str(result.artifacts.result_path))
+            console.print(table)
+            if result.details:
+                console.print(result.details)
+        if execute and result.success is not True:
+            raise typer.Exit(1)
+    except (OSError, TestClientError, DesignerError, typer.BadParameter) as exc:
+        if json_output:
+            typer.echo(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        else:
+            console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
 
 
@@ -530,9 +687,9 @@ def backup_infobase(
     execute: bool = typer.Option(False, "--execute"),
     yes: bool = typer.Option(False, "--yes"),
 ) -> None:
-    """Create a .dt backup of the primary infobase before an explicitly approved apply."""
+    """Create a .dt backup of the primary infobase before an approved apply."""
     if execute:
-        _require_yes(yes, "Infobase backup")
+        _require_yes(yes, "Primary infobase backup")
     try:
         result = Designer(_settings()).dump_infobase(target, execute=execute)
         _print_result(result)
@@ -549,9 +706,9 @@ def load_config(
     update_db: bool = typer.Option(False, "--update-db"),
     yes: bool = typer.Option(False, "--yes"),
 ) -> None:
-    """Explicitly apply workspace to the primary infobase. Never used by the autonomous check loop."""
+    """Load workspace sources into the primary development infobase; always explicit."""
     if execute:
-        _require_yes(yes, "Primary infobase load")
+        _require_yes(yes, "Primary configuration load")
     settings = _settings()
     try:
         result = Designer(settings).load_config(
