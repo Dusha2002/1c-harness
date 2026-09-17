@@ -20,7 +20,7 @@ class RegisterMetadataEditor(ExtendedMetadataEditor):
     }
 
     @staticmethod
-    def _generated_types(prefix: str, name: str, categories: Sequence[str], ids: Sequence[str]) -> str:
+    def _register_generated_types(prefix: str, name: str, categories: Sequence[str], ids: Sequence[str]) -> str:
         lines: list[str] = []
         for index, category in enumerate(categories):
             type_id = ids[index * 2]
@@ -115,7 +115,7 @@ class RegisterMetadataEditor(ExtendedMetadataEditor):
 
         generated_ids = self._new_ids(14)
         categories = ("Record", "Manager", "Selection", "List", "RecordSet", "RecordKey", "RecordManager")
-        generated = self._generated_types("InformationRegister", name, categories, generated_ids)
+        generated = self._register_generated_types("InformationRegister", name, categories, generated_ids)
         standard = self._standard_attributes(("Active", "LineNumber", "Recorder", "Period"))
         children = self._register_children(dimensions, resources, attributes)
         version = self._format_version()
@@ -176,7 +176,7 @@ class RegisterMetadataEditor(ExtendedMetadataEditor):
 
         generated_ids = self._new_ids(12)
         categories = ("Record", "Manager", "Selection", "List", "RecordSet", "RecordKey")
-        generated = self._generated_types("AccumulationRegister", name, categories, generated_ids)
+        generated = self._register_generated_types("AccumulationRegister", name, categories, generated_ids)
         standard_names = ("RecordType", "Active", "LineNumber", "Recorder", "Period") if normalized == "Balance" else (
             "Active",
             "LineNumber",
