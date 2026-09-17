@@ -67,10 +67,12 @@ The agent gets `run_ui_test` when started with `--ui-test`. If the current run c
 - autonomous validation never loads into the primary infobase;
 - staging is required for `--check` and generated E2E runner compilation;
 - Test Client targets an explicit test connection or staging, never primary by fallback;
-- no unrestricted shell or direct DBMS SQL is exposed to the model;
-- every source/metadata mutation is snapshotted;
+- generated E2E runner EPFs are compiled through the staging Designer connection;
+- the model never receives unrestricted shell access;
+- workspace paths cannot escape `ONEC_WORKSPACE`;
+- every source/metadata mutation receives a snapshot;
 - COM writes require two explicit opt-ins;
-- primary configuration apply remains `--execute --yes` and can be preceded by `.dt` backup.
+- primary configuration load remains an explicit `--execute --yes` action and can be preceded by `.dt` backup.
 
 ## Quick start on Windows
 
