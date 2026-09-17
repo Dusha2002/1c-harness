@@ -3,6 +3,7 @@ from pathlib import Path
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.semantic import MetadataEditor
 from onec_harness.semantic_extra import ExtendedMetadataEditor
+from onec_harness.semantic_forms import FormMetadataEditor
 from onec_harness.semantic_registers import RegisterMetadataEditor
 from onec_harness.workspace import Workspace
 
@@ -190,3 +191,84 @@ def test_create_turnovers_accumulation_register_omits_record_type_standard_attri
     text = workspace.read_text("AccumulationRegisters/ПродажиОбороты.xml")
     assert "<RegisterType>Turnovers</RegisterType>" in text
     assert '<xr:StandardAttribute name="RecordType">' not in text
+
+
+def test_create_default_catalog_form(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = FormMetadataEditor(workspace)
+    editor.create_catalog("Товары")
+
+    change = editor.create_managed_form(
+        "catalog",
+        "Товары",
+        "ФормаЭлемента",
+        purpose="Object",
+        set_default=True,
+    )
+
+    parent = workspace.read_text("Catalogs/Товары.xml")
+    form = workspace.read_text("Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form.xml")
+    assert "<Form>ФормаЭлемента</Form>" in parent
+    assert "<DefaultObjectForm>Catalog.Товары.Form.ФормаЭлемента</DefaultObjectForm>" in parent
+    assert "cfg:CatalogObject.Товары" in form
+    assert "<MainAttribute>true</MainAttribute>" in form
+    assert workspace.resolve("Catalogs/Товары/Forms/ФормаЭлемента/Ext/Form/Module.bsl").exists()
+    assert change.snapshot_id
+
+
+def test_add_input_and_command_to_managed_form(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = FormMetadataEditor(workspace)
+    editor.create_document("Заявка")
+    editor.create_managed_form("document", "Заявка", "ФормаДокумента", purpose="Object")
+
+    editor.add_form_input(
+        "document",
+        "Заявка",
+        "ФормаДокумента",
+        "Комментарий",
+        data_path="Объект.Комментарий",
+        title="Комментарий",
+    )
+    editor.add_form_command(
+        "document",
+        "Заявка",
+        "ФормаДокумента",
+        "Проверить",
+        action="ПроверитьОбработка",
+        default_button=True,
+        handler_body="Сообщить(\"Проверено\");",
+    )
+
+    form = workspace.read_text("Documents/Заявка/Forms/ФормаДокумента/Ext/Form.xml")
+    module = workspace.read_text("Documents/Заявка/Forms/ФормаДокумента/Ext/Form/Module.bsl")
+    assert '<InputField name="Комментарий"' in form
+    assert "<DataPath>Объект.Комментарий</DataPath>" in form
+    assert '<Command name="Проверить"' in form
+    assert "<Action>ПроверитьОбработка</Action>" in form
+    assert '<Button name="Проверить"' in form
+    assert "<DefaultButton>true</DefaultButton>" in form
+    assert "Процедура ПроверитьОбработка(Команда)" in module
+    assert 'Сообщить("Проверено");' in module
+
+
+def test_create_information_register_record_form(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = FormMetadataEditor(workspace)
+    editor.create_information_register("Цены")
+
+    editor.create_managed_form(
+        "information_register",
+        "Цены",
+        "ФормаЗаписи",
+        purpose="Record",
+        set_default=True,
+    )
+
+    parent = workspace.read_text("InformationRegisters/Цены.xml")
+    form = workspace.read_text("InformationRegisters/Цены/Forms/ФормаЗаписи/Ext/Form.xml")
+    assert "<DefaultRecordForm>InformationRegister.Цены.Form.ФормаЗаписи</DefaultRecordForm>" in parent
+    assert "cfg:InformationRegisterRecordManager.Цены" in form
