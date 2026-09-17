@@ -17,6 +17,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  TestTube2,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -26,7 +27,6 @@ import type { AgentResult, AgentStep, HarnessDoctor, PatchPreview, StepStatus } 
 
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
-
   monaco.languages.register({ id: "bsl" });
   monaco.languages.setMonarchTokensProvider("bsl", {
     ignoreCase: true,
@@ -63,7 +63,10 @@ function toolLabel(tool: string): string {
     patch: "Подготовлена точечная правка",
     create_catalog: "Создан справочник в метаданных",
     create_document_meta: "Создан документ в метаданных",
+    create_enum: "Создано перечисление",
+    add_enum_value: "Добавлено значение перечисления",
     add_attribute: "Добавлен реквизит метаданных",
+    add_tabular_section: "Добавлена табличная часть",
     ensure_module: "Создан модуль объекта",
     diff: "Diff проверен агентом",
     stage_config: "Изменения загружены в staging 1С",
@@ -76,6 +79,7 @@ function toolLabel(tool: string): string {
     create_catalog_item: "Создан элемент в runtime 1С",
     create_document_record: "Создан документ в runtime 1С",
     ui_test_scenario: "Подготовлен сценарий Test Manager",
+    run_ui_test: "Выполнен E2E Test Client/Test Manager",
     rollback: "Правка откатана из snapshot",
   };
   return labels[tool] ?? tool;
@@ -91,18 +95,15 @@ function previewFromResult(result: AgentResult): PatchPreview | null {
   const patch = [...result.steps].reverse().find((step) => step.tool === "patch");
   if (patch) {
     const path = typeof patch.args.path === "string" ? patch.args.path : "Изменённый модуль.bsl";
-    const original = typeof patch.args.old === "string" ? patch.args.old : "";
-    const modified = typeof patch.args.new === "string" ? patch.args.new : patch.result;
     return {
       id: `live-${Date.now()}`,
       file: path,
       language: languageFor(path),
-      original,
-      modified,
+      original: typeof patch.args.old === "string" ? patch.args.old : "",
+      modified: typeof patch.args.new === "string" ? patch.args.new : patch.result,
       snapshotId: result.snapshots.at(-1),
     };
   }
-
   const diff = [...result.steps].reverse().find((step) => step.tool === "diff");
   if (diff && diff.result && diff.result !== "No changes") {
     const match = /^\+\+\+\s+b\/(.+)$/m.exec(diff.result);
@@ -133,6 +134,7 @@ export default function App() {
   const [activePatch, setActivePatch] = useState<PatchPreview>(demoPatch);
   const [snapshots, setSnapshots] = useState<string[]>([]);
   const [checksOk, setChecksOk] = useState<boolean | null>(true);
+  const [uiTestOk, setUiTestOk] = useState<boolean | null>(null);
 
   const completed = useMemo(() => steps.filter((step) => step.status === "done").length, [steps]);
 
@@ -147,11 +149,13 @@ export default function App() {
         result.staging_connection ? "staging" : null,
         result.com_configured ? "COM" : null,
         result.test_client_connection ? "Test Client" : null,
+        result.test_manager_connection ? "Test Manager" : null,
+        result.e2e_ui_testing ? "E2E ready" : null,
       ].filter(Boolean).join(" · ");
       if (!result.onec_exe || !result.onec_connection) {
         setNotice("Harness найден, но путь к 1С или основная инфобаза ещё не настроены.");
       } else {
-        setNotice(capabilities ? `1С подключена. Доступно: ${capabilities}.` : "1С подключена; дополнительные адаптеры ещё не настроены.");
+        setNotice(capabilities ? `1С подключена. Доступно: ${capabilities}.` : "1С подключена.");
       }
     } catch {
       setConnected(false);
@@ -166,21 +170,30 @@ export default function App() {
     setNotice(null);
     setLastTask(trimmed);
     setPatchState("pending");
+    setUiTestOk(null);
     setSteps([{ id: "live-1", label: "Агент анализирует задачу", status: "running" }]);
 
     try {
       const { runAgent } = await import("./lib/harness");
-      const result = await runAgent(trimmed, { write: true, check: Boolean(doctor?.staging_connection) });
+      const result = await runAgent(trimmed, {
+        write: true,
+        check: Boolean(doctor?.staging_connection),
+        uiTest: Boolean(doctor?.e2e_ui_testing),
+      });
       setSteps(
         result.steps.map((step, index) => ({
           id: `live-${index}`,
           label: toolLabel(step.tool),
           detail: step.result.split("\n")[0].slice(0, 150),
-          status: step.result.startsWith("ERROR:") || step.result.includes(": FAILED") ? "failed" as const : "done" as const,
+          status:
+            step.result.startsWith("ERROR:") || step.result.includes(": FAILED") || step.result.includes('"success": false')
+              ? "failed" as const
+              : "done" as const,
         })),
       );
       setSnapshots(result.snapshots);
       setChecksOk(result.checks_ok);
+      setUiTestOk(result.ui_test_ok);
       const preview = previewFromResult(result);
       if (preview) {
         setActivePatch(preview);
@@ -200,20 +213,19 @@ export default function App() {
 
   function acceptPatch() {
     setPatchState("accepted");
-    setNotice("Правка оставлена в локальном workspace. Применение к основной 1С остаётся отдельным подтверждаемым действием.");
+    setNotice("Правка оставлена в локальном workspace. Применение к основной 1С остаётся отдельным действием.");
   }
 
   async function rejectPatch() {
     if (patchState !== "pending") return;
     try {
       const { restoreSnapshot } = await import("./lib/harness");
-      for (const snapshotId of [...snapshots].reverse()) {
-        await restoreSnapshot(snapshotId);
-      }
+      for (const snapshotId of [...snapshots].reverse()) await restoreSnapshot(snapshotId);
       setPatchState("rejected");
       setActivePatch((current) => ({ ...current, modified: current.original }));
       setNotice(snapshots.length ? "Правка отклонена: snapshots восстановлены." : "Правка отклонена.");
       setSnapshots([]);
+      setUiTestOk(null);
     } catch (error) {
       setNotice(`Не удалось восстановить snapshot: ${String(error)}`);
     }
@@ -227,18 +239,13 @@ export default function App() {
           <div className="brand-mark"><Code2 size={16} /></div>
           <span className="brand-name">1C Harness</span>
         </div>
-
         <div className="session-title">
-          <span>Новая сессия</span>
-          <span className="session-separator">/</span>
+          <span>Новая сессия</span><span className="session-separator">/</span>
           <span className="session-time">{doctor?.llm_model ?? "GigaChat 3 Ultra"}</span>
         </div>
-
         <div className="top-actions">
           <button className={`connect-button ${connected ? "connected" : ""}`} onClick={() => void connectHarness()}>
-            <span className="onec-badge">1C</span>
-            {connected ? "1С подключена" : "Подключить 1С"}
-            <ChevronDown size={14} />
+            <span className="onec-badge">1C</span>{connected ? "1С подключена" : "Подключить 1С"}<ChevronDown size={14} />
           </button>
           <span className={`status-dot ${connected ? "online" : ""}`} />
           <button className="icon-button"><Settings size={18} /></button>
@@ -249,7 +256,6 @@ export default function App() {
         <section className="conversation-pane">
           <div className="conversation-scroll">
             <div className="user-bubble">{lastTask}</div>
-
             <div className="agent-block">
               <div className="agent-avatar"><Bot size={18} /></div>
               <div className="agent-content">
@@ -261,26 +267,23 @@ export default function App() {
                   {steps.map((step) => (
                     <div className="step-row" key={step.id}>
                       <span className={`step-icon ${step.status}`}>{statusIcon(step.status)}</span>
-                      <div className="step-copy">
-                        <span>{step.label}</span>
-                        {step.detail && <small>{step.detail}</small>}
-                      </div>
+                      <div className="step-copy"><span>{step.label}</span>{step.detail && <small>{step.detail}</small>}</div>
                     </div>
                   ))}
                 </div>
-
                 <div className="agent-summary">
                   <p>
-                    Изменения выполняются только в локальном workspace. При наличии staging-базы harness загружает правку туда,
-                    запускает CheckModules и CheckConfig и не касается основной инфобазы без отдельного подтверждения.
+                    Правки остаются в workspace. Staging-проверки и E2E Test Manager выполняются только на отдельных тестовых базах;
+                    основная инфобаза не изменяется автоматически.
                   </p>
                   <div className="summary-chip-row">
                     {snapshots.length > 0 && <span className="summary-chip"><ShieldCheck size={14} /> snapshot создан</span>}
                     {checksOk === true && <span className="summary-chip"><CheckCircle2 size={14} /> staging checks: OK</span>}
+                    {uiTestOk === true && <span className="summary-chip"><TestTube2 size={14} /> E2E UI: OK</span>}
+                    {uiTestOk === false && <span className="summary-chip"><X size={14} /> E2E UI: FAILED</span>}
                     {doctor?.com_configured && <span className="summary-chip"><Database size={14} /> COM read доступен</span>}
                   </div>
                 </div>
-
                 {notice && <div className="notice">{notice}</div>}
               </div>
             </div>
@@ -307,6 +310,7 @@ export default function App() {
                 <div className="composer-tools">
                   <button className="soft-icon"><Paperclip size={16} /></button>
                   <span className="mode-pill"><MessageSquareText size={13} /> Агент</span>
+                  {doctor?.e2e_ui_testing && <span className="mode-pill"><TestTube2 size={13} /> E2E</span>}
                 </div>
                 <button className="send-button" disabled={!task.trim() || running} onClick={() => void submitTask()}>
                   {running ? <RefreshCw size={17} className="spin" /> : <Send size={17} />}
@@ -320,25 +324,18 @@ export default function App() {
           <div className="review-header">
             <div className="file-tab">
               <FileCode2 size={16} />
-              <div>
-                <strong>{activePatch.file.split("/").at(-1)}</strong>
-                <span>{activePatch.file}</span>
-              </div>
+              <div><strong>{activePatch.file.split("/").at(-1)}</strong><span>{activePatch.file}</span></div>
             </div>
-            <div className="review-meta">
-              <span>Review</span>
-              <button className="icon-button"><X size={17} /></button>
-            </div>
+            <div className="review-meta"><span>Review</span><button className="icon-button"><X size={17} /></button></div>
           </div>
-
           <div className="review-toolbar">
-            <span className="change-dot" />
-            <span>{activePatch.language.toUpperCase()} · local staged change</span>
+            <span className="change-dot" /><span>{activePatch.language.toUpperCase()} · local staged change</span>
             <div className="toolbar-spacer" />
-            <button className="toolbar-action"><Play size={14} /> Проверить</button>
+            <button className="toolbar-action" onClick={() => setNotice(
+              doctor?.e2e_ui_testing ? "E2E доступен агенту для релевантных UI-задач." : "Настрой Test Manager для E2E-проверки.",
+            )}><Play size={14} /> Проверить</button>
             <button className="toolbar-action"><RotateCcw size={14} /> Snapshot</button>
           </div>
-
           <div className="editor-wrap">
             <DiffEditor
               beforeMount={registerBsl}
@@ -361,7 +358,6 @@ export default function App() {
               }}
             />
           </div>
-
           <div className="review-footer">
             <span className={`review-state ${patchState}`}>
               {patchState === "pending" && "Изменение подготовлено для проверки"}
