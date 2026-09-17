@@ -22,7 +22,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { demoPatch, demoSteps } from "./mock";
-import type { AgentStep, HarnessDoctor, StepStatus } from "./types";
+import type { AgentResult, AgentStep, HarnessDoctor, PatchPreview, StepStatus } from "./types";
 
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
@@ -31,26 +31,9 @@ const registerBsl: BeforeMount = (monaco) => {
   monaco.languages.setMonarchTokensProvider("bsl", {
     ignoreCase: true,
     keywords: [
-      "Процедура",
-      "КонецПроцедуры",
-      "Функция",
-      "КонецФункции",
-      "Если",
-      "Тогда",
-      "Иначе",
-      "КонецЕсли",
-      "Для",
-      "Каждого",
-      "Из",
-      "Цикл",
-      "КонецЦикла",
-      "Возврат",
-      "Истина",
-      "Ложь",
-      "Неопределено",
-      "Новый",
-      "Экспорт",
-      "Перем",
+      "Процедура", "КонецПроцедуры", "Функция", "КонецФункции", "Если", "Тогда", "Иначе", "КонецЕсли",
+      "Для", "Каждого", "Из", "Цикл", "КонецЦикла", "Возврат", "Истина", "Ложь", "Неопределено", "Новый",
+      "Экспорт", "Перем",
     ],
     tokenizer: {
       root: [
@@ -77,13 +60,63 @@ function toolLabel(tool: string): string {
     symbols: "Найдены BSL-процедуры и функции",
     search: "Найдены релевантные фрагменты кода",
     read: "Код модуля прочитан",
-    patch: "Подготовлена правка",
+    patch: "Подготовлена точечная правка",
+    create_catalog: "Создан справочник в метаданных",
+    create_document_meta: "Создан документ в метаданных",
+    add_attribute: "Добавлен реквизит метаданных",
+    ensure_module: "Создан модуль объекта",
     diff: "Diff проверен агентом",
+    stage_config: "Изменения загружены в staging 1С",
     check_modules: "CheckModules выполнен",
     check_config: "CheckConfig выполнен",
-    rollback: "Правка откатана",
+    runtime_query: "Выполнен read-only запрос к 1С",
+    catalog_items: "Прочитаны элементы справочника",
+    document_items: "Прочитаны документы",
+    register_records: "Прочитаны записи регистра",
+    create_catalog_item: "Создан элемент в runtime 1С",
+    create_document_record: "Создан документ в runtime 1С",
+    ui_test_scenario: "Подготовлен сценарий Test Manager",
+    rollback: "Правка откатана из snapshot",
   };
   return labels[tool] ?? tool;
+}
+
+function languageFor(path: string): PatchPreview["language"] {
+  if (path.toLowerCase().endsWith(".bsl")) return "bsl";
+  if (path.toLowerCase().endsWith(".xml")) return "xml";
+  return "text";
+}
+
+function previewFromResult(result: AgentResult): PatchPreview | null {
+  const patch = [...result.steps].reverse().find((step) => step.tool === "patch");
+  if (patch) {
+    const path = typeof patch.args.path === "string" ? patch.args.path : "Изменённый модуль.bsl";
+    const original = typeof patch.args.old === "string" ? patch.args.old : "";
+    const modified = typeof patch.args.new === "string" ? patch.args.new : patch.result;
+    return {
+      id: `live-${Date.now()}`,
+      file: path,
+      language: languageFor(path),
+      original,
+      modified,
+      snapshotId: result.snapshots.at(-1),
+    };
+  }
+
+  const diff = [...result.steps].reverse().find((step) => step.tool === "diff");
+  if (diff && diff.result && diff.result !== "No changes") {
+    const match = /^\+\+\+\s+b\/(.+)$/m.exec(diff.result);
+    const path = match?.[1] ?? "workspace.diff";
+    return {
+      id: `live-${Date.now()}`,
+      file: path,
+      language: match ? languageFor(path) : "text",
+      original: "",
+      modified: diff.result,
+      snapshotId: result.snapshots.at(-1),
+    };
+  }
+  return null;
 }
 
 export default function App() {
@@ -91,9 +124,15 @@ export default function App() {
   const [doctor, setDoctor] = useState<HarnessDoctor | null>(null);
   const [steps, setSteps] = useState<AgentStep[]>(demoSteps);
   const [task, setTask] = useState("");
+  const [lastTask, setLastTask] = useState(
+    "Проверь проведение документа ЗаказПокупателя и не позволяй проводить его при недостаточном остатке товара.",
+  );
   const [running, setRunning] = useState(false);
   const [patchState, setPatchState] = useState<"pending" | "accepted" | "rejected">("pending");
   const [notice, setNotice] = useState<string | null>(null);
+  const [activePatch, setActivePatch] = useState<PatchPreview>(demoPatch);
+  const [snapshots, setSnapshots] = useState<string[]>([]);
+  const [checksOk, setChecksOk] = useState<boolean | null>(true);
 
   const completed = useMemo(() => steps.filter((step) => step.status === "done").length, [steps]);
 
@@ -104,8 +143,15 @@ export default function App() {
       const result = await getDoctor();
       setDoctor(result);
       setConnected(Boolean(result.onec_exe && result.onec_connection));
+      const capabilities = [
+        result.staging_connection ? "staging" : null,
+        result.com_configured ? "COM" : null,
+        result.test_client_connection ? "Test Client" : null,
+      ].filter(Boolean).join(" · ");
       if (!result.onec_exe || !result.onec_connection) {
-        setNotice("Harness найден, но путь к 1С или подключение к инфобазе ещё не настроены.");
+        setNotice("Harness найден, но путь к 1С или основная инфобаза ещё не настроены.");
+      } else {
+        setNotice(capabilities ? `1С подключена. Доступно: ${capabilities}.` : "1С подключена; дополнительные адаптеры ещё не настроены.");
       }
     } catch {
       setConnected(false);
@@ -118,23 +164,35 @@ export default function App() {
     if (!trimmed || running) return;
     setRunning(true);
     setNotice(null);
+    setLastTask(trimmed);
+    setPatchState("pending");
     setSteps([{ id: "live-1", label: "Агент анализирует задачу", status: "running" }]);
 
     try {
       const { runAgent } = await import("./lib/harness");
-      const result = await runAgent(trimmed, { write: false, check: false });
+      const result = await runAgent(trimmed, { write: true, check: Boolean(doctor?.staging_connection) });
       setSteps(
         result.steps.map((step, index) => ({
           id: `live-${index}`,
           label: toolLabel(step.tool),
-          detail: step.result.split("\n")[0].slice(0, 120),
-          status: "done" as const,
+          detail: step.result.split("\n")[0].slice(0, 150),
+          status: step.result.startsWith("ERROR:") || step.result.includes(": FAILED") ? "failed" as const : "done" as const,
         })),
       );
+      setSnapshots(result.snapshots);
+      setChecksOk(result.checks_ok);
+      const preview = previewFromResult(result);
+      if (preview) {
+        setActivePatch(preview);
+        setPatchState("pending");
+      } else {
+        setPatchState("accepted");
+      }
       setNotice(result.summary);
       setTask("");
     } catch (error) {
       setSteps([{ id: "error", label: "Не удалось запустить локальный harness", detail: String(error), status: "failed" }]);
+      setNotice(String(error));
     } finally {
       setRunning(false);
     }
@@ -142,12 +200,23 @@ export default function App() {
 
   function acceptPatch() {
     setPatchState("accepted");
-    setNotice("Правка принята в локальном workspace. Загрузка в 1С остаётся отдельным подтверждаемым действием.");
+    setNotice("Правка оставлена в локальном workspace. Применение к основной 1С остаётся отдельным подтверждаемым действием.");
   }
 
-  function rejectPatch() {
-    setPatchState("rejected");
-    setNotice("Правка отклонена. Для реальной сессии harness восстановит snapshot затронутого файла.");
+  async function rejectPatch() {
+    if (patchState !== "pending") return;
+    try {
+      const { restoreSnapshot } = await import("./lib/harness");
+      for (const snapshotId of [...snapshots].reverse()) {
+        await restoreSnapshot(snapshotId);
+      }
+      setPatchState("rejected");
+      setActivePatch((current) => ({ ...current, modified: current.original }));
+      setNotice(snapshots.length ? "Правка отклонена: snapshots восстановлены." : "Правка отклонена.");
+      setSnapshots([]);
+    } catch (error) {
+      setNotice(`Не удалось восстановить snapshot: ${String(error)}`);
+    }
   }
 
   return (
@@ -162,11 +231,11 @@ export default function App() {
         <div className="session-title">
           <span>Новая сессия</span>
           <span className="session-separator">/</span>
-          <span className="session-time">GigaChat 3 Ultra</span>
+          <span className="session-time">{doctor?.llm_model ?? "GigaChat 3 Ultra"}</span>
         </div>
 
         <div className="top-actions">
-          <button className={`connect-button ${connected ? "connected" : ""}`} onClick={connectHarness}>
+          <button className={`connect-button ${connected ? "connected" : ""}`} onClick={() => void connectHarness()}>
             <span className="onec-badge">1C</span>
             {connected ? "1С подключена" : "Подключить 1С"}
             <ChevronDown size={14} />
@@ -179,9 +248,7 @@ export default function App() {
       <main className="workspace-layout">
         <section className="conversation-pane">
           <div className="conversation-scroll">
-            <div className="user-bubble">
-              Проверь проведение документа ЗаказПокупателя и не позволяй проводить его при недостаточном остатке товара.
-            </div>
+            <div className="user-bubble">{lastTask}</div>
 
             <div className="agent-block">
               <div className="agent-avatar"><Bot size={18} /></div>
@@ -204,12 +271,13 @@ export default function App() {
 
                 <div className="agent-summary">
                   <p>
-                    Найдена логика проведения документа и связанный регистр остатков. Harness сделал snapshot,
-                    подготовил минимальную BSL-правку и показал её справа до загрузки в 1С.
+                    Изменения выполняются только в локальном workspace. При наличии staging-базы harness загружает правку туда,
+                    запускает CheckModules и CheckConfig и не касается основной инфобазы без отдельного подтверждения.
                   </p>
                   <div className="summary-chip-row">
-                    <span className="summary-chip"><ShieldCheck size={14} /> snapshot создан</span>
-                    <span className="summary-chip"><CheckCircle2 size={14} /> CheckModules: OK</span>
+                    {snapshots.length > 0 && <span className="summary-chip"><ShieldCheck size={14} /> snapshot создан</span>}
+                    {checksOk === true && <span className="summary-chip"><CheckCircle2 size={14} /> staging checks: OK</span>}
+                    {doctor?.com_configured && <span className="summary-chip"><Database size={14} /> COM read доступен</span>}
                   </div>
                 </div>
 
@@ -253,19 +321,19 @@ export default function App() {
             <div className="file-tab">
               <FileCode2 size={16} />
               <div>
-                <strong>{demoPatch.file.split("/").at(-1)}</strong>
-                <span>{demoPatch.file}</span>
+                <strong>{activePatch.file.split("/").at(-1)}</strong>
+                <span>{activePatch.file}</span>
               </div>
             </div>
             <div className="review-meta">
-              <span>Правка 1 / 1</span>
+              <span>Review</span>
               <button className="icon-button"><X size={17} /></button>
             </div>
           </div>
 
           <div className="review-toolbar">
             <span className="change-dot" />
-            <span>BSL · staged change</span>
+            <span>{activePatch.language.toUpperCase()} · local staged change</span>
             <div className="toolbar-spacer" />
             <button className="toolbar-action"><Play size={14} /> Проверить</button>
             <button className="toolbar-action"><RotateCcw size={14} /> Snapshot</button>
@@ -274,9 +342,9 @@ export default function App() {
           <div className="editor-wrap">
             <DiffEditor
               beforeMount={registerBsl}
-              original={demoPatch.original}
-              modified={demoPatch.modified}
-              language="bsl"
+              original={activePatch.original}
+              modified={activePatch.modified}
+              language={activePatch.language}
               theme="vs"
               options={{
                 readOnly: true,
@@ -295,13 +363,13 @@ export default function App() {
           </div>
 
           <div className="review-footer">
-            <span className={`review-state ${patchState}` }>
+            <span className={`review-state ${patchState}`}>
               {patchState === "pending" && "Изменение подготовлено для проверки"}
               {patchState === "accepted" && "Правка принята локально"}
-              {patchState === "rejected" && "Правка отклонена"}
+              {patchState === "rejected" && "Правка отклонена и восстановлена"}
             </span>
             <div className="review-buttons">
-              <button className="reject-button" onClick={rejectPatch} disabled={patchState !== "pending"}>Отклонить</button>
+              <button className="reject-button" onClick={() => void rejectPatch()} disabled={patchState !== "pending"}>Отклонить</button>
               <button className="accept-button" onClick={acceptPatch} disabled={patchState !== "pending"}>
                 <Check size={16} /> Принять
               </button>

@@ -33,5 +33,11 @@ export interface HarnessDoctor {
   llm_credentials: boolean;
   onec_exe: string | null;
   onec_connection: boolean;
+  staging_connection: boolean;
+  com_configured: boolean;
+  runtime_writes: boolean;
+  test_client_connection: boolean;
+  test_manager_connection: boolean;
+  test_port: number;
   workspace: string;
 }
