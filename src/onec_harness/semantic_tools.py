@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from onec_harness.semantic import SemanticChange
-from onec_harness.semantic_registers import RegisterMetadataEditor
+from onec_harness.semantic_forms import FormMetadataEditor
 from onec_harness.workspace import Workspace
 
 
@@ -17,6 +17,9 @@ SEMANTIC_TOOLS = frozenset(
         "add_tabular_section",
         "create_information_register",
         "create_accumulation_register",
+        "create_managed_form",
+        "add_form_input",
+        "add_form_command",
         "ensure_module",
     }
 )
@@ -26,7 +29,7 @@ class SemanticToolExecutor:
     """Translate stable high-level agent actions to deterministic metadata edits."""
 
     def __init__(self, workspace: Workspace) -> None:
-        self.editor = RegisterMetadataEditor(workspace)
+        self.editor = FormMetadataEditor(workspace)
 
     @staticmethod
     def _objects(value: Any, label: str) -> list[dict[str, Any]]:
@@ -103,6 +106,37 @@ class SemanticToolExecutor:
                 resources=self._objects(args.get("resources"), "resources"),
                 attributes=self._objects(args.get("attributes"), "attributes"),
                 enable_totals_splitting=bool(args.get("enable_totals_splitting", True)),
+            )
+        if tool == "create_managed_form":
+            return self.editor.create_managed_form(
+                str(args.get("kind", "")),
+                str(args.get("object_name", "")),
+                str(args.get("name", "")),
+                purpose=str(args.get("purpose", "Custom")),
+                synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                set_default=bool(args.get("set_default", False)),
+                module_content=str(args["module_content"]) if args.get("module_content") is not None else None,
+            )
+        if tool == "add_form_input":
+            return self.editor.add_form_input(
+                str(args.get("kind", "")),
+                str(args.get("object_name", "")),
+                str(args.get("form_name", "")),
+                str(args.get("name", "")),
+                data_path=str(args.get("data_path", "")),
+                title=str(args["title"]) if args.get("title") is not None else None,
+            )
+        if tool == "add_form_command":
+            return self.editor.add_form_command(
+                str(args.get("kind", "")),
+                str(args.get("object_name", "")),
+                str(args.get("form_name", "")),
+                str(args.get("name", "")),
+                action=str(args["action"]) if args.get("action") is not None else None,
+                title=str(args["title"]) if args.get("title") is not None else None,
+                button=bool(args.get("button", True)),
+                default_button=bool(args.get("default_button", False)),
+                handler_body=str(args["handler_body"]) if args.get("handler_body") is not None else None,
             )
         if tool == "ensure_module":
             return self.editor.ensure_module(
