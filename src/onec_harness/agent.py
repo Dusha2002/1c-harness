@@ -7,9 +7,11 @@ from typing import Any
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.onec.com import ComConnector, ComConnectorError
 from onec_harness.onec.designer import Designer, DesignerError
+from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler, TestClientError
 from onec_harness.providers.base import LLMProvider, Message
-from onec_harness.semantic import MetadataEditor, SemanticMetadataError
+from onec_harness.semantic import SemanticMetadataError
+from onec_harness.semantic_extra import ExtendedMetadataEditor
 from onec_harness.snapshots import SnapshotError, SnapshotStore
 from onec_harness.workspace import Workspace, WorkspaceError
 
@@ -27,7 +29,10 @@ SYSTEM_PROMPT = """Ты автономный инженер по 1С:Предп�
 {"tool":"patch","args":{"path":"relative/path.bsl","old":"точный старый фрагмент","new":"новый фрагмент"}}
 {"tool":"create_catalog","args":{"name":"Оборудование","synonym":"Оборудование","hierarchical":false}}
 {"tool":"create_document_meta","args":{"name":"Заявка","synonym":"Заявка","posting":false}}
+{"tool":"create_enum","args":{"name":"Статусы","values":["Новый","Закрыт"]}}
+{"tool":"add_enum_value","args":{"enum_name":"Статусы","name":"Отменен","synonym":"Отменен"}}
 {"tool":"add_attribute","args":{"kind":"catalog","object_name":"Оборудование","name":"СерийныйНомер","value_type":"string","string_length":100}}
+{"tool":"add_tabular_section","args":{"kind":"document","object_name":"Заявка","name":"Товары","columns":[{"name":"Товар","value_type":"CatalogRef.Товары"},{"name":"Количество","value_type":"number","digits":15,"fraction_digits":3}]}}
 {"tool":"ensure_module","args":{"kind":"catalog","object_name":"Оборудование","module":"object","content":""}}
 {"tool":"diff","args":{}}
 {"tool":"stage_config","args":{"update_db":false}}
@@ -45,8 +50,9 @@ Runtime write tools существуют только при явном разр
 {"tool":"create_catalog_item","args":{"name":"Оборудование","attributes":{"Наименование":"Тест"}}}
 {"tool":"create_document_record","args":{"name":"Заявка","attributes":{},"post":false}}
 
-UI test helper:
+UI testing:
 {"tool":"ui_test_scenario","args":{"actions":[{"action":"execute_command","link":"e1cib/command/Catalog.Оборудование.Create"},{"action":"wait_form","title":"Оборудование*"}]}}
+{"tool":"run_ui_test","args":{"actions":[{"action":"execute_command","link":"e1cib/command/Catalog.Оборудование.Create"},{"action":"wait_form","title":"Оборудование*"}]}}
 
 Завершение:
 {"tool":"finish","args":{"summary":"что сделано и как проверено"}}
@@ -60,9 +66,11 @@ UI test helper:
 - Если включена проверка 1С: после изменения вызови stage_config, затем check_modules И check_config.
 - stage_config работает только с отдельной staging-инфобазой; не загружай изменения в основную базу.
 - Если stage/check вернул ошибку, изучи лог, исправь исходники и повтори полный цикл stage/check.
-- update_db=true допустим только для staging и нужен перед runtime/UI тестом изменённых метаданных.
+- update_db=true допустим только для staging и обязателен перед E2E UI тестом изменённых метаданных/кода.
 - Runtime-запись не выполняй без явного разрешения; read-only tools можно использовать для диагностики.
-- UI test scenario компилирует BSL-сценарий Test Manager, но не считай его выполненным без фактического запуска.
+- ui_test_scenario только генерирует BSL. run_ui_test реально собирает EPF и запускает Test Client/Test Manager.
+- Для задач, меняющих пользовательский UI/формы/интерактивное поведение, при доступном run_ui_test предпочитай фактический E2E тест.
+- Если run_ui_test был запущен и упал, не завершай задачу как успешную: исправь или откати изменение.
 - Не утверждай об успешной проверке, если harness не вернул OK.
 """
 
@@ -80,6 +88,7 @@ class AgentResult:
     steps: list[AgentStep] = field(default_factory=list)
     snapshots: list[str] = field(default_factory=list)
     checks_ok: bool | None = None
+    ui_test_ok: bool | None = None
 
 
 class AgentProtocolError(RuntimeError):
@@ -95,8 +104,10 @@ class HarnessAgent:
         designer: Designer | None = None,
         runtime: ComConnector | None = None,
         scenario_compiler: ScenarioCompiler | None = None,
+        test_runner: TestManagerRunner | None = None,
         allow_writes: bool = False,
         execute_checks: bool = False,
+        execute_ui_tests: bool = False,
         allow_runtime_writes: bool = False,
         max_result_chars: int = 60_000,
     ) -> None:
@@ -105,19 +116,24 @@ class HarnessAgent:
         self.designer = designer
         self.runtime = runtime
         self.scenario_compiler = scenario_compiler
+        self.test_runner = test_runner
         self.allow_writes = allow_writes
         self.execute_checks = execute_checks
+        self.execute_ui_tests = execute_ui_tests
         self.allow_runtime_writes = allow_runtime_writes
         self.max_result_chars = max_result_chars
         self.snapshots = SnapshotStore(workspace)
-        self.metadata_editor = MetadataEditor(workspace)
+        self.metadata_editor = ExtendedMetadataEditor(workspace)
         self.index = ConfigurationIndex.build(workspace.root)
         self._source_changed = False
         self._diff_seen = False
         self._stage_attempted = False
         self._stage_ok: bool | None = None
+        self._stage_db_updated = False
         self._module_check_ok: bool | None = None
         self._config_check_ok: bool | None = None
+        self._ui_test_attempted = False
+        self._ui_test_ok: bool | None = None
         self._snapshot_ids: list[str] = []
 
     @staticmethod
@@ -172,12 +188,21 @@ class HarnessAgent:
             raise AgentProtocolError(f"{label} must be an object")
         return value
 
+    @staticmethod
+    def _action_list(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            raise AgentProtocolError("actions must be an array of objects")
+        return value
+
     def _reset_validation(self) -> None:
         self._diff_seen = False
         self._stage_attempted = False
         self._stage_ok = None
+        self._stage_db_updated = False
         self._module_check_ok = None
         self._config_check_ok = None
+        self._ui_test_attempted = False
+        self._ui_test_ok = None
 
     def _mark_source_change(self, snapshot_id: str) -> None:
         self._source_changed = True
@@ -221,7 +246,16 @@ class HarnessAgent:
             self._mark_source_change(snapshot.snapshot_id)
             return f"Patched {path}. snapshot_id={snapshot.snapshot_id}"
 
-        if tool in {"create_catalog", "create_document_meta", "add_attribute", "ensure_module"}:
+        semantic_tools = {
+            "create_catalog",
+            "create_document_meta",
+            "create_enum",
+            "add_enum_value",
+            "add_attribute",
+            "add_tabular_section",
+            "ensure_module",
+        }
+        if tool in semantic_tools:
             if not self.allow_writes:
                 return "ERROR: source writes are disabled. Run agent with --write."
             if tool == "create_catalog":
@@ -236,6 +270,21 @@ class HarnessAgent:
                     synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
                     posting=bool(args.get("posting", False)),
                 )
+            elif tool == "create_enum":
+                values = args.get("values", [])
+                if not isinstance(values, list):
+                    raise AgentProtocolError("values must be an array")
+                change = self.metadata_editor.create_enum(
+                    str(args.get("name", "")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                    values=values,
+                )
+            elif tool == "add_enum_value":
+                change = self.metadata_editor.add_enum_value(
+                    str(args.get("enum_name", "")),
+                    str(args.get("name", "")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                )
             elif tool == "add_attribute":
                 change = self.metadata_editor.add_attribute(
                     str(args.get("kind", "")),
@@ -246,6 +295,17 @@ class HarnessAgent:
                     string_length=int(args.get("string_length", 100)),
                     digits=int(args.get("digits", 15)),
                     fraction_digits=int(args.get("fraction_digits", 2)),
+                )
+            elif tool == "add_tabular_section":
+                columns = args.get("columns", [])
+                if not isinstance(columns, list) or not all(isinstance(item, dict) for item in columns):
+                    raise AgentProtocolError("columns must be an array of objects")
+                change = self.metadata_editor.add_tabular_section(
+                    str(args.get("kind", "")),
+                    str(args.get("object_name", "")),
+                    str(args.get("name", "")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                    columns=columns,
                 )
             else:
                 change = self.metadata_editor.ensure_module(
@@ -265,16 +325,20 @@ class HarnessAgent:
                 return "ERROR: staging is disabled. Run agent with --check and configure staging DB."
             if self.designer is None:
                 return "ERROR: staging Designer is not configured"
+            update_db = bool(args.get("update_db", False))
             result = self.designer.load_config(
                 self.workspace.root,
                 execute=True,
-                update_db=bool(args.get("update_db", False)),
+                update_db=update_db,
                 update_dump_info=True,
             )
             self._stage_attempted = True
             self._stage_ok = result.ok
+            self._stage_db_updated = bool(result.ok and update_db)
             self._module_check_ok = None
             self._config_check_ok = None
+            self._ui_test_attempted = False
+            self._ui_test_ok = None
             output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
             return self._clip(self._format_check("StageConfig", result.ok, output))
 
@@ -354,10 +418,19 @@ class HarnessAgent:
         if tool == "ui_test_scenario":
             if self.scenario_compiler is None:
                 return "ERROR: UI test compiler is not configured"
-            actions = args.get("actions")
-            if not isinstance(actions, list) or not all(isinstance(item, dict) for item in actions):
-                return "ERROR: actions must be an array of objects"
-            return self._clip(self.scenario_compiler.compile(actions))
+            return self._clip(self.scenario_compiler.compile(self._action_list(args.get("actions"))))
+
+        if tool == "run_ui_test":
+            if not self.execute_ui_tests:
+                return "ERROR: E2E UI test execution is disabled. Run agent with --ui-test."
+            if self.test_runner is None:
+                return "ERROR: Test Manager E2E runner is not configured"
+            if self._source_changed and self._stage_db_updated is not True:
+                return "ERROR: changed sources require successful stage_config with update_db=true before E2E UI testing."
+            result = self.test_runner.run(self._action_list(args.get("actions")), execute=True)
+            self._ui_test_attempted = True
+            self._ui_test_ok = result.success is True
+            return self._clip(json.dumps(result.as_dict(), ensure_ascii=False, default=str))
 
         return f"ERROR: unknown tool {tool!r}"
 
@@ -367,17 +440,18 @@ class HarnessAgent:
         return bool(self._stage_ok and self._module_check_ok and self._config_check_ok)
 
     def _finish_block_reason(self) -> str | None:
-        if not self._source_changed:
-            return None
-        if not self._diff_seen:
-            return "You changed files but have not inspected diff yet. Call diff before finish."
-        if self.execute_checks:
-            if not self._stage_attempted or self._stage_ok is not True:
-                return "Changed files are not successfully loaded into staging. Call stage_config and fix any error."
-            if self._module_check_ok is not True:
-                return "Run check_modules successfully against staging before finish."
-            if self._config_check_ok is not True:
-                return "Run check_config successfully against staging before finish."
+        if self._source_changed:
+            if not self._diff_seen:
+                return "You changed files but have not inspected diff yet. Call diff before finish."
+            if self.execute_checks:
+                if not self._stage_attempted or self._stage_ok is not True:
+                    return "Changed files are not successfully loaded into staging. Call stage_config and fix any error."
+                if self._module_check_ok is not True:
+                    return "Run check_modules successfully against staging before finish."
+                if self._config_check_ok is not True:
+                    return "Run check_config successfully against staging before finish."
+        if self._ui_test_attempted and self._ui_test_ok is not True:
+            return "The latest E2E UI test failed. Fix the problem or rollback before finish."
         return None
 
     async def run(self, task: str, *, max_steps: int = 24) -> AgentResult:
@@ -404,7 +478,7 @@ class HarnessAgent:
                     messages.append(Message(role="user", content=f"FINISH_BLOCKED: {blocked}"))
                     continue
                 summary = str(args.get("summary", "")).strip() or "Agent finished without a summary."
-                return AgentResult(summary, steps, list(self._snapshot_ids), self._checks_ok())
+                return AgentResult(summary, steps, list(self._snapshot_ids), self._checks_ok(), self._ui_test_ok)
 
             try:
                 result = self._execute_tool(tool, args)
@@ -429,4 +503,5 @@ class HarnessAgent:
             steps=steps,
             snapshots=list(self._snapshot_ids),
             checks_ok=self._checks_ok(),
+            ui_test_ok=self._ui_test_ok,
         )

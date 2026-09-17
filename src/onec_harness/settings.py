@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     onec_test_host: str = "localhost"
     onec_test_port: int = 1538
     onec_test_client_id: str | None = None
+    onec_test_startup_timeout_seconds: float = 30.0
+    onec_test_timeout_seconds: float = 120.0
 
     @property
     def provider_name(self) -> str:

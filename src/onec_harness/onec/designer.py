@@ -115,6 +115,24 @@ class Designer:
             action.append("/UpdateDBCfg")
         return self._run(action, execute=execute)
 
+    def build_external_processor(
+        self,
+        source_xml: Path,
+        target_epf: Path,
+        *,
+        execute: bool = False,
+    ) -> CommandResult:
+        source_xml = source_xml.expanduser().resolve()
+        target_epf = target_epf.expanduser().resolve()
+        if execute:
+            if not source_xml.exists():
+                raise DesignerError(f"External processor source XML not found: {source_xml}")
+            target_epf.parent.mkdir(parents=True, exist_ok=True)
+        return self._run(
+            ["/LoadExternalDataProcessorOrReportFromFiles", str(source_xml), str(target_epf)],
+            execute=execute,
+        )
+
     def update_db(self, *, execute: bool = False) -> CommandResult:
         return self._run(["/UpdateDBCfg"], execute=execute)
 

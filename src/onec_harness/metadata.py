@@ -14,7 +14,9 @@ METADATA_KINDS = {
     "CalculationRegisters": "calculation_register",
     "BusinessProcesses": "business_process",
     "Tasks": "task",
-    "Enumerations": "enumeration",
+    "Enums": "enum",
+    # Older/custom exporters sometimes use this folder name; keep it readable.
+    "Enumerations": "enum",
     "CommonModules": "common_module",
     "Reports": "report",
     "DataProcessors": "data_processor",
@@ -74,9 +76,7 @@ class ConfigurationIndex:
                 continue
             for match in SYMBOL_RE.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
-                index.symbols.append(
-                    BslSymbol(name=match.group("name"), path=str(relative), line=line)
-                )
+                index.symbols.append(BslSymbol(name=match.group("name"), path=str(relative), line=line))
 
         for folder, kind in METADATA_KINDS.items():
             folder_path = root / folder

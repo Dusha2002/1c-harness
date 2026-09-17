@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ class TestProcess:
     command: list[str]
     pid: int | None = None
     executed: bool = False
+    process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
 
 
 class TestClientLauncher:
@@ -60,7 +61,12 @@ class TestClientLauncher:
             command.append(f"-TestClientID{self.settings.onec_test_client_id}")
         return command
 
-    def test_manager_command(self) -> list[str]:
+    def test_manager_command(
+        self,
+        *,
+        external_processor: Path | None = None,
+        output: Path | None = None,
+    ) -> list[str]:
         connection = self.settings.onec_test_manager_connection.strip()
         if not connection:
             raise TestClientError("ONEC_TEST_MANAGER_CONNECTION is not configured")
@@ -70,6 +76,12 @@ class TestClientLauncher:
             self.settings.onec_test_manager_password or self.settings.onec_password,
         )
         command.append("/TestManager")
+        if external_processor is not None:
+            command.extend(["/Execute", str(external_processor.expanduser().resolve())])
+        if output is not None:
+            output = output.expanduser().resolve()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            command.extend(["/Out", str(output)])
         return command
 
     def _launch(self, command: list[str], *, execute: bool) -> TestProcess:
@@ -81,13 +93,22 @@ class TestClientLauncher:
             process = subprocess.Popen(command)  # noqa: S603
         except OSError as exc:
             raise TestClientError(f"Cannot start 1C test process: {exc}") from exc
-        return TestProcess(command=command, pid=process.pid, executed=True)
+        return TestProcess(command=command, pid=process.pid, executed=True, process=process)
 
     def launch_client(self, *, execute: bool = False) -> TestProcess:
         return self._launch(self.test_client_command(), execute=execute)
 
-    def launch_manager(self, *, execute: bool = False) -> TestProcess:
-        return self._launch(self.test_manager_command(), execute=execute)
+    def launch_manager(
+        self,
+        *,
+        execute: bool = False,
+        external_processor: Path | None = None,
+        output: Path | None = None,
+    ) -> TestProcess:
+        return self._launch(
+            self.test_manager_command(external_processor=external_processor, output=output),
+            execute=execute,
+        )
 
 
 class ScenarioCompiler:
