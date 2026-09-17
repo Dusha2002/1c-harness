@@ -21,10 +21,29 @@ class FakeProvider:
 class FakeDesigner:
     def __init__(self, ok: bool = True) -> None:
         self.ok = ok
-        self.check_calls = 0
+        self.stage_calls = 0
+        self.module_calls = 0
+        self.config_calls = 0
+
+    def load_config(
+        self,
+        source: Path,
+        *,
+        execute: bool = False,
+        update_db: bool = False,
+        update_dump_info: bool = False,
+    ) -> CommandResult:
+        self.stage_calls += 1
+        assert update_dump_info is True
+        return CommandResult(
+            command=["1cv8", "DESIGNER", "/LoadConfigFromFiles", str(source)],
+            returncode=0 if self.ok else 1,
+            log="staged" if self.ok else "load error",
+            executed=execute,
+        )
 
     def check_modules(self, *, execute: bool = False) -> CommandResult:
-        self.check_calls += 1
+        self.module_calls += 1
         return CommandResult(
             command=["1cv8", "DESIGNER", "/CheckModules"],
             returncode=0 if self.ok else 1,
@@ -33,10 +52,11 @@ class FakeDesigner:
         )
 
     def check_config(self, *, execute: bool = False) -> CommandResult:
+        self.config_calls += 1
         return CommandResult(
             command=["1cv8", "DESIGNER", "/CheckConfig"],
-            returncode=0,
-            log="config ok",
+            returncode=0 if self.ok else 1,
+            log="config ok" if self.ok else "config error",
             executed=execute,
         )
 
@@ -86,10 +106,10 @@ def test_agent_refuses_patch_in_read_only_mode(tmp_path: Path) -> None:
 
     assert result.summary == "blocked"
     assert workspace.read_text("Module.bsl") == "old"
-    assert "writes are disabled" in result.steps[0].result
+    assert "source writes are disabled" in result.steps[0].result
 
 
-def test_agent_requires_successful_1c_check_when_enabled(tmp_path: Path) -> None:
+def test_agent_requires_stage_and_both_checks_when_enabled(tmp_path: Path) -> None:
     _git_init(tmp_path)
     workspace = Workspace(tmp_path)
     workspace.write_text("Module.bsl", "old")
@@ -101,6 +121,10 @@ def test_agent_requires_successful_1c_check_when_enabled(tmp_path: Path) -> None
             '{"tool":"diff","args":{}}',
             '{"tool":"finish","args":{"summary":"too early"}}',
             '{"tool":"check_modules","args":{}}',
+            '{"tool":"stage_config","args":{}}',
+            '{"tool":"check_modules","args":{}}',
+            '{"tool":"finish","args":{"summary":"still early"}}',
+            '{"tool":"check_config","args":{}}',
             '{"tool":"finish","args":{"summary":"checked"}}',
         ]
     )
@@ -117,4 +141,7 @@ def test_agent_requires_successful_1c_check_when_enabled(tmp_path: Path) -> None
 
     assert result.summary == "checked"
     assert result.checks_ok is True
-    assert designer.check_calls == 1
+    assert designer.stage_calls == 1
+    assert designer.module_calls == 1
+    assert designer.config_calls == 1
+    assert "stage_config first" in result.steps[2].result

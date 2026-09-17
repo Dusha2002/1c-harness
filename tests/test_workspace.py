@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,3 +32,16 @@ def test_search_is_case_insensitive(tmp_path: Path) -> None:
 
     assert len(matches) == 1
     assert matches[0].line == 1
+
+
+def test_git_diff_includes_untracked_metadata_files(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Catalogs/NewCatalog.xml", "<MetaDataObject/>\n")
+    workspace.write_text(".onec-harness/snapshots/internal.json", "{}")
+
+    diff = workspace.git_diff()
+
+    assert "Catalogs/NewCatalog.xml" in diff
+    assert "+<MetaDataObject/>" in diff
+    assert ".onec-harness" not in diff

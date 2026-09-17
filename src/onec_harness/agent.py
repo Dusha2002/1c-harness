@@ -5,40 +5,65 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from onec_harness.metadata import ConfigurationIndex
+from onec_harness.onec.com import ComConnector, ComConnectorError
 from onec_harness.onec.designer import Designer, DesignerError
+from onec_harness.onec.testing import ScenarioCompiler, TestClientError
 from onec_harness.providers.base import LLMProvider, Message
+from onec_harness.semantic import MetadataEditor, SemanticMetadataError
 from onec_harness.snapshots import SnapshotError, SnapshotStore
 from onec_harness.workspace import Workspace, WorkspaceError
 
 
 SYSTEM_PROMPT = """Ты автономный инженер по 1С:Предприятие/BSL, работающий через безопасный harness.
-Твоя задача — исследовать выгруженную конфигурацию и выполнить запрос пользователя минимальным точечным изменением.
-Не выдумывай имена объектов, модулей, процедур или полей: сначала найди их через metadata/symbols/search/read.
+Исследуй реальную конфигурацию и выполняй запрос минимальными, проверяемыми изменениями.
+Не выдумывай имена объектов, модулей, процедур, реквизитов или полей: сначала используй metadata/symbols/search/read.
 
 На каждом шаге отвечай ТОЛЬКО одним JSON-объектом без Markdown.
-Доступные действия:
-
+Основные действия:
 {"tool":"metadata","args":{"query":"Заказ"}}
 {"tool":"symbols","args":{"query":"Проведение"}}
 {"tool":"search","args":{"query":"строка"}}
 {"tool":"read","args":{"path":"relative/path.bsl"}}
 {"tool":"patch","args":{"path":"relative/path.bsl","old":"точный старый фрагмент","new":"новый фрагмент"}}
+{"tool":"create_catalog","args":{"name":"Оборудование","synonym":"Оборудование","hierarchical":false}}
+{"tool":"create_document_meta","args":{"name":"Заявка","synonym":"Заявка","posting":false}}
+{"tool":"add_attribute","args":{"kind":"catalog","object_name":"Оборудование","name":"СерийныйНомер","value_type":"string","string_length":100}}
+{"tool":"ensure_module","args":{"kind":"catalog","object_name":"Оборудование","module":"object","content":""}}
 {"tool":"diff","args":{}}
+{"tool":"stage_config","args":{"update_db":false}}
 {"tool":"check_modules","args":{}}
 {"tool":"check_config","args":{}}
-{"tool":"rollback","args":{"snapshot_id":"id из результата patch"}}
-{"tool":"finish","args":{"summary":"что выяснено/изменено и что проверить дальше"}}
+{"tool":"rollback","args":{"snapshot_id":"id из результата изменения"}}
+
+Read-only runtime tools (через 1С, не SQL к СУБД):
+{"tool":"runtime_query","args":{"text":"ВЫБРАТЬ ...","fields":["Поле"],"parameters":{},"limit":100}}
+{"tool":"catalog_items","args":{"name":"Контрагенты","fields":["Ссылка","Код","Наименование"],"filters":{},"limit":50}}
+{"tool":"document_items","args":{"name":"ЗаказПокупателя","fields":["Ссылка","Дата","Номер"],"filters":{},"limit":50}}
+{"tool":"register_records","args":{"kind":"accumulation","name":"ТоварыНаСкладах","fields":["Товар","Количество"],"filters":{},"limit":50}}
+
+Runtime write tools существуют только при явном разрешении пользователя:
+{"tool":"create_catalog_item","args":{"name":"Оборудование","attributes":{"Наименование":"Тест"}}}
+{"tool":"create_document_record","args":{"name":"Заявка","attributes":{},"post":false}}
+
+UI test helper:
+{"tool":"ui_test_scenario","args":{"actions":[{"action":"execute_command","link":"e1cib/command/Catalog.Оборудование.Create"},{"action":"wait_form","title":"Оборудование*"}]}}
+
+Завершение:
+{"tool":"finish","args":{"summary":"что сделано и как проверено"}}
 
 Правила:
-- patch должен быть минимальным; old должен встречаться ровно один раз;
-- перед каждым patch harness автоматически делает snapshot затрагиваемого файла;
-- никогда не используй абсолютные пути и ../;
-- после изменения обязательно вызови diff;
-- если проверки 1С разрешены, после изменения обязательно вызови check_modules;
-- если check_modules/check_config вернул ошибку, изучи лог, исправь проблему и запусти проверку снова;
-- не утверждай, что проверка 1С прошла, если harness не дал успешного результата;
-- если данных недостаточно, исследуй проект дополнительными metadata/symbols/search/read;
-- finish используй только когда задача выполнена или конкретно объяснена блокировка.
+- Любое изменение исходников автоматически получает snapshot.
+- patch должен быть минимальным, old должен встречаться ровно один раз.
+- Для создания/изменения метаданных предпочитай semantic tools вместо ручного редактирования XML.
+- Никогда не используй абсолютные пути и ../.
+- После любого изменения исходников обязательно вызови diff.
+- Если включена проверка 1С: после изменения вызови stage_config, затем check_modules И check_config.
+- stage_config работает только с отдельной staging-инфобазой; не загружай изменения в основную базу.
+- Если stage/check вернул ошибку, изучи лог, исправь исходники и повтори полный цикл stage/check.
+- update_db=true допустим только для staging и нужен перед runtime/UI тестом изменённых метаданных.
+- Runtime-запись не выполняй без явного разрешения; read-only tools можно использовать для диагностики.
+- UI test scenario компилирует BSL-сценарий Test Manager, но не считай его выполненным без фактического запуска.
+- Не утверждай об успешной проверке, если harness не вернул OK.
 """
 
 
@@ -68,22 +93,31 @@ class HarnessAgent:
         workspace: Workspace,
         *,
         designer: Designer | None = None,
+        runtime: ComConnector | None = None,
+        scenario_compiler: ScenarioCompiler | None = None,
         allow_writes: bool = False,
         execute_checks: bool = False,
+        allow_runtime_writes: bool = False,
         max_result_chars: int = 60_000,
     ) -> None:
         self.provider = provider
         self.workspace = workspace
         self.designer = designer
+        self.runtime = runtime
+        self.scenario_compiler = scenario_compiler
         self.allow_writes = allow_writes
         self.execute_checks = execute_checks
+        self.allow_runtime_writes = allow_runtime_writes
         self.max_result_chars = max_result_chars
         self.snapshots = SnapshotStore(workspace)
+        self.metadata_editor = MetadataEditor(workspace)
         self.index = ConfigurationIndex.build(workspace.root)
-        self._patches_made = False
+        self._source_changed = False
         self._diff_seen = False
-        self._check_attempted = False
-        self._last_check_ok: bool | None = None
+        self._stage_attempted = False
+        self._stage_ok: bool | None = None
+        self._module_check_ok: bool | None = None
+        self._config_check_ok: bool | None = None
         self._snapshot_ids: list[str] = []
 
     @staticmethod
@@ -122,25 +156,52 @@ class HarnessAgent:
 
     @staticmethod
     def _format_check(name: str, ok: bool, output: str) -> str:
-        status = "OK" if ok else "FAILED"
-        return f"{name}: {status}\n{output}".rstrip()
+        return f"{name}: {'OK' if ok else 'FAILED'}\n{output}".rstrip()
+
+    @staticmethod
+    def _string_list(value: Any, *, label: str) -> list[str]:
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise AgentProtocolError(f"{label} must be an array of strings")
+        return value
+
+    @staticmethod
+    def _mapping(value: Any, *, label: str) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise AgentProtocolError(f"{label} must be an object")
+        return value
+
+    def _reset_validation(self) -> None:
+        self._diff_seen = False
+        self._stage_attempted = False
+        self._stage_ok = None
+        self._module_check_ok = None
+        self._config_check_ok = None
+
+    def _mark_source_change(self, snapshot_id: str) -> None:
+        self._source_changed = True
+        self._snapshot_ids.append(snapshot_id)
+        self._reset_validation()
+        self.index = ConfigurationIndex.build(self.workspace.root)
+
+    def _semantic_result(self, change: Any) -> str:
+        self._mark_source_change(change.snapshot_id)
+        return f"{change.summary}. snapshot_id={change.snapshot_id}; paths={', '.join(change.paths)}"
+
+    def _require_runtime(self) -> ComConnector:
+        if self.runtime is None:
+            raise ComConnectorError("COM runtime adapter is not configured")
+        return self.runtime
 
     def _execute_tool(self, tool: str, args: dict[str, Any]) -> str:
         if tool == "metadata":
-            query = str(args.get("query", ""))
-            return self._clip(self.index.describe_objects(query=query))
-
+            return self._clip(self.index.describe_objects(query=str(args.get("query", ""))))
         if tool == "symbols":
-            query = str(args.get("query", ""))
-            return self._clip(self.index.describe_symbols(query=query))
-
+            return self._clip(self.index.describe_symbols(query=str(args.get("query", ""))))
         if tool == "search":
-            query = str(args.get("query", ""))
-            matches = self.workspace.search(query)[:100]
-            if not matches:
-                return "No matches"
-            return self._clip("\n".join(f"{m.path}:{m.line}: {m.text}" for m in matches))
-
+            matches = self.workspace.search(str(args.get("query", "")))[:100]
+            return self._clip("\n".join(f"{m.path}:{m.line}: {m.text}" for m in matches) or "No matches")
         if tool == "read":
             path = str(args.get("path", ""))
             if not path:
@@ -149,7 +210,7 @@ class HarnessAgent:
 
         if tool == "patch":
             if not self.allow_writes:
-                return "ERROR: writes are disabled. User must run agent with --write."
+                return "ERROR: source writes are disabled. Run agent with --write."
             path = str(args.get("path", ""))
             old = str(args.get("old", ""))
             new = str(args.get("new", ""))
@@ -157,31 +218,81 @@ class HarnessAgent:
                 return "ERROR: patch requires path and non-empty old text"
             snapshot = self.snapshots.create([path])
             self.workspace.replace_once(path, old, new)
-            self._snapshot_ids.append(snapshot.snapshot_id)
-            self._patches_made = True
-            self._diff_seen = False
-            self._check_attempted = False
-            self._last_check_ok = None
-            self.index = ConfigurationIndex.build(self.workspace.root)
+            self._mark_source_change(snapshot.snapshot_id)
             return f"Patched {path}. snapshot_id={snapshot.snapshot_id}"
+
+        if tool in {"create_catalog", "create_document_meta", "add_attribute", "ensure_module"}:
+            if not self.allow_writes:
+                return "ERROR: source writes are disabled. Run agent with --write."
+            if tool == "create_catalog":
+                change = self.metadata_editor.create_catalog(
+                    str(args.get("name", "")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                    hierarchical=bool(args.get("hierarchical", False)),
+                )
+            elif tool == "create_document_meta":
+                change = self.metadata_editor.create_document(
+                    str(args.get("name", "")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                    posting=bool(args.get("posting", False)),
+                )
+            elif tool == "add_attribute":
+                change = self.metadata_editor.add_attribute(
+                    str(args.get("kind", "")),
+                    str(args.get("object_name", "")),
+                    str(args.get("name", "")),
+                    value_type=str(args.get("value_type", "string")),
+                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
+                    string_length=int(args.get("string_length", 100)),
+                    digits=int(args.get("digits", 15)),
+                    fraction_digits=int(args.get("fraction_digits", 2)),
+                )
+            else:
+                change = self.metadata_editor.ensure_module(
+                    str(args.get("kind", "")),
+                    str(args.get("object_name", "")),
+                    module=str(args.get("module", "object")),
+                    content=str(args.get("content", "")),
+                )
+            return self._semantic_result(change)
 
         if tool == "diff":
             self._diff_seen = True
             return self._clip(self.workspace.git_diff() or "No changes")
 
+        if tool == "stage_config":
+            if not self.execute_checks:
+                return "ERROR: staging is disabled. Run agent with --check and configure staging DB."
+            if self.designer is None:
+                return "ERROR: staging Designer is not configured"
+            result = self.designer.load_config(
+                self.workspace.root,
+                execute=True,
+                update_db=bool(args.get("update_db", False)),
+                update_dump_info=True,
+            )
+            self._stage_attempted = True
+            self._stage_ok = result.ok
+            self._module_check_ok = None
+            self._config_check_ok = None
+            output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
+            return self._clip(self._format_check("StageConfig", result.ok, output))
+
         if tool in {"check_modules", "check_config"}:
             if not self.execute_checks:
                 return "ERROR: 1C checks are disabled. Run agent with --check."
             if self.designer is None:
-                return "ERROR: Designer is not configured"
+                return "ERROR: staging Designer is not configured"
+            if self._source_changed and self._stage_ok is not True:
+                return "ERROR: changed workspace has not been successfully loaded into staging. Call stage_config first."
             if tool == "check_modules":
                 result = self.designer.check_modules(execute=True)
+                self._module_check_ok = result.ok
                 label = "CheckModules"
             else:
                 result = self.designer.check_config(execute=True)
+                self._config_check_ok = result.ok
                 label = "CheckConfig"
-            self._check_attempted = True
-            self._last_check_ok = result.ok
             output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
             return self._clip(self._format_check(label, result.ok, output))
 
@@ -191,32 +302,88 @@ class HarnessAgent:
                 return "ERROR: snapshot_id is required"
             restored = self.snapshots.restore(snapshot_id)
             self.index = ConfigurationIndex.build(self.workspace.root)
-            self._patches_made = False
-            self._diff_seen = False
-            self._check_attempted = False
-            self._last_check_ok = None
+            self._source_changed = bool(self.workspace.git_diff().strip())
+            self._reset_validation()
             return f"Restored snapshot {restored.snapshot_id}: {', '.join(restored.paths)}"
+
+        if tool == "runtime_query":
+            runtime = self._require_runtime()
+            rows = runtime.query(
+                str(args.get("text", "")),
+                fields=self._string_list(args.get("fields"), label="fields"),
+                parameters=self._mapping(args.get("parameters"), label="parameters"),
+                limit=int(args.get("limit", 200)),
+            )
+            return self._clip(json.dumps(rows, ensure_ascii=False, default=str))
+        if tool in {"catalog_items", "document_items"}:
+            runtime = self._require_runtime()
+            fields = self._string_list(args.get("fields"), label="fields")
+            common = {
+                "name": str(args.get("name", "")),
+                "fields": fields,
+                "filters": self._mapping(args.get("filters"), label="filters"),
+                "limit": int(args.get("limit", 100)),
+            }
+            rows = runtime.catalog_items(**common) if tool == "catalog_items" else runtime.document_items(**common)
+            return self._clip(json.dumps(rows, ensure_ascii=False, default=str))
+        if tool == "register_records":
+            rows = self._require_runtime().register_records(
+                str(args.get("kind", "")),
+                str(args.get("name", "")),
+                fields=self._string_list(args.get("fields"), label="fields"),
+                filters=self._mapping(args.get("filters"), label="filters"),
+                limit=int(args.get("limit", 100)),
+            )
+            return self._clip(json.dumps(rows, ensure_ascii=False, default=str))
+
+        if tool in {"create_catalog_item", "create_document_record"}:
+            if not self.allow_runtime_writes:
+                return "ERROR: runtime writes are disabled. They require explicit --runtime-write and environment opt-in."
+            runtime = self._require_runtime()
+            attributes = self._mapping(args.get("attributes"), label="attributes")
+            if tool == "create_catalog_item":
+                ref = runtime.create_catalog_item(str(args.get("name", "")), attributes)
+            else:
+                ref = runtime.create_document(
+                    str(args.get("name", "")),
+                    attributes,
+                    post=bool(args.get("post", False)),
+                )
+            return f"Runtime object created: {ref}"
+
+        if tool == "ui_test_scenario":
+            if self.scenario_compiler is None:
+                return "ERROR: UI test compiler is not configured"
+            actions = args.get("actions")
+            if not isinstance(actions, list) or not all(isinstance(item, dict) for item in actions):
+                return "ERROR: actions must be an array of objects"
+            return self._clip(self.scenario_compiler.compile(actions))
 
         return f"ERROR: unknown tool {tool!r}"
 
+    def _checks_ok(self) -> bool | None:
+        if not self.execute_checks or not self._source_changed:
+            return None
+        return bool(self._stage_ok and self._module_check_ok and self._config_check_ok)
+
     def _finish_block_reason(self) -> str | None:
-        if not self._patches_made:
+        if not self._source_changed:
             return None
         if not self._diff_seen:
             return "You changed files but have not inspected diff yet. Call diff before finish."
-        if self.execute_checks and not self._check_attempted:
-            return "You changed files but have not run check_modules yet. Call check_modules before finish."
-        if self.execute_checks and self._last_check_ok is False:
-            return "The latest 1C check failed. Fix the error or rollback before finish."
+        if self.execute_checks:
+            if not self._stage_attempted or self._stage_ok is not True:
+                return "Changed files are not successfully loaded into staging. Call stage_config and fix any error."
+            if self._module_check_ok is not True:
+                return "Run check_modules successfully against staging before finish."
+            if self._config_check_ok is not True:
+                return "Run check_config successfully against staging before finish."
         return None
 
-    async def run(self, task: str, *, max_steps: int = 16) -> AgentResult:
+    async def run(self, task: str, *, max_steps: int = 24) -> AgentResult:
         if max_steps < 1:
             raise ValueError("max_steps must be >= 1")
-        messages = [
-            Message(role="system", content=SYSTEM_PROMPT),
-            Message(role="user", content=f"Задача:\n{task}"),
-        ]
+        messages = [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=f"Задача:\n{task}")]
         steps: list[AgentStep] = []
 
         for _ in range(max_steps):
@@ -225,9 +392,7 @@ class HarnessAgent:
                 action = self._parse_action(response.content)
             except AgentProtocolError as exc:
                 messages.append(Message(role="assistant", content=response.content))
-                messages.append(
-                    Message(role="user", content=f"PROTOCOL_ERROR: {exc}. Верни только корректный JSON action.")
-                )
+                messages.append(Message(role="user", content=f"PROTOCOL_ERROR: {exc}. Верни только корректный JSON action."))
                 continue
 
             tool = action["tool"]
@@ -239,16 +404,21 @@ class HarnessAgent:
                     messages.append(Message(role="user", content=f"FINISH_BLOCKED: {blocked}"))
                     continue
                 summary = str(args.get("summary", "")).strip() or "Agent finished without a summary."
-                return AgentResult(
-                    summary=summary,
-                    steps=steps,
-                    snapshots=list(self._snapshot_ids),
-                    checks_ok=self._last_check_ok,
-                )
+                return AgentResult(summary, steps, list(self._snapshot_ids), self._checks_ok())
 
             try:
                 result = self._execute_tool(tool, args)
-            except (WorkspaceError, SnapshotError, DesignerError, OSError) as exc:
+            except (
+                WorkspaceError,
+                SnapshotError,
+                DesignerError,
+                SemanticMetadataError,
+                ComConnectorError,
+                TestClientError,
+                AgentProtocolError,
+                OSError,
+                ValueError,
+            ) as exc:
                 result = f"ERROR: {exc}"
             steps.append(AgentStep(tool=tool, args=args, result=result))
             messages.append(Message(role="assistant", content=response.content))
@@ -258,5 +428,5 @@ class HarnessAgent:
             summary=f"Stopped after reaching max_steps={max_steps}. No finish action received.",
             steps=steps,
             snapshots=list(self._snapshot_ids),
-            checks_ok=self._last_check_ok,
+            checks_ok=self._checks_ok(),
         )

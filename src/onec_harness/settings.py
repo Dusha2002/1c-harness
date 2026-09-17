@@ -37,12 +37,30 @@ class Settings(BaseSettings):
     anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_version: str = "2023-06-01"
 
+    # Primary development infobase. The autonomous validation loop never loads
+    # staged XML here; a disposable/test copy is configured separately below.
     onec_exe: Path | None = None
     onec_ib_connection: str = ""
+    onec_staging_ib_connection: str = ""
     onec_user: str | None = None
     onec_password: str | None = None
     onec_workspace: Path = Field(default_factory=lambda: Path("workspace"))
     onec_command_timeout_seconds: float = 600.0
+
+    # External connection / runtime data access.
+    onec_com_connection: str = ""
+    onec_com_progid: str = "V83.COMConnector"
+    onec_runtime_allow_writes: bool = False
+
+    # Standard 1C automated testing. A Test Client must target a disposable
+    # infobase explicitly or fall back to the staging infobase, never primary.
+    onec_test_client_connection: str = ""
+    onec_test_manager_connection: str = ""
+    onec_test_manager_user: str | None = None
+    onec_test_manager_password: str | None = None
+    onec_test_host: str = "localhost"
+    onec_test_port: int = 1538
+    onec_test_client_id: str | None = None
 
     @property
     def provider_name(self) -> str:

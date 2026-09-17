@@ -34,11 +34,14 @@ class CommandResult:
 class Designer:
     """Auditable wrapper around 1cv8 DESIGNER batch commands."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, connection_override: str | None = None) -> None:
         self.settings = settings
         if settings.onec_exe is None:
             raise DesignerError("ONEC_EXE is not configured")
         self.exe = settings.onec_exe.expanduser()
+        self.connection = settings.onec_ib_connection if connection_override is None else connection_override
+        if not self.connection.strip():
+            raise DesignerError("1C infobase connection is not configured")
 
     @staticmethod
     def _split_args(raw: str) -> list[str]:
@@ -47,7 +50,7 @@ class Designer:
 
     def _base_command(self) -> list[str]:
         command = [str(self.exe), "DESIGNER"]
-        command.extend(self._split_args(self.settings.onec_ib_connection))
+        command.extend(self._split_args(self.connection))
         if self.settings.onec_user:
             command.extend(["/N", self.settings.onec_user])
         if self.settings.onec_password:
@@ -103,14 +106,23 @@ class Designer:
         *,
         execute: bool = False,
         update_db: bool = False,
+        update_dump_info: bool = False,
     ) -> CommandResult:
         action = ["/LoadConfigFromFiles", str(source.expanduser().resolve())]
+        if update_dump_info:
+            action.append("-updateConfigDumpInfo")
         if update_db:
             action.append("/UpdateDBCfg")
         return self._run(action, execute=execute)
 
     def update_db(self, *, execute: bool = False) -> CommandResult:
         return self._run(["/UpdateDBCfg"], execute=execute)
+
+    def dump_infobase(self, target: Path, *, execute: bool = False) -> CommandResult:
+        target = target.expanduser().resolve()
+        if execute:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        return self._run(["/DumpIB", str(target)], execute=execute)
 
     def check_modules(
         self,
