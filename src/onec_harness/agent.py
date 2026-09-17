@@ -11,7 +11,7 @@ from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler, TestClientError
 from onec_harness.providers.base import LLMProvider, Message
 from onec_harness.semantic import SemanticMetadataError
-from onec_harness.semantic_extra import ExtendedMetadataEditor
+from onec_harness.semantic_tools import SEMANTIC_TOOLS, SemanticToolExecutor
 from onec_harness.snapshots import SnapshotError, SnapshotStore
 from onec_harness.workspace import Workspace, WorkspaceError
 
@@ -33,6 +33,8 @@ SYSTEM_PROMPT = """Ты автономный инженер по 1С:Предп�
 {"tool":"add_enum_value","args":{"enum_name":"Статусы","name":"Отменен","synonym":"Отменен"}}
 {"tool":"add_attribute","args":{"kind":"catalog","object_name":"Оборудование","name":"СерийныйНомер","value_type":"string","string_length":100}}
 {"tool":"add_tabular_section","args":{"kind":"document","object_name":"Заявка","name":"Товары","columns":[{"name":"Товар","value_type":"CatalogRef.Товары"},{"name":"Количество","value_type":"number","digits":15,"fraction_digits":3}]}}
+{"tool":"create_information_register","args":{"name":"Цены","periodicity":"Nonperiodical","write_mode":"Independent","dimensions":[{"name":"Товар","value_type":"CatalogRef.Товары","main_filter":true}],"resources":[{"name":"Цена","value_type":"number","digits":15,"fraction_digits":2}]}}
+{"tool":"create_accumulation_register","args":{"name":"ОстаткиТоваров","register_type":"Balance","dimensions":[{"name":"Товар","value_type":"CatalogRef.Товары"}],"resources":[{"name":"Количество","value_type":"number","digits":15,"fraction_digits":3}]}}
 {"tool":"ensure_module","args":{"kind":"catalog","object_name":"Оборудование","module":"object","content":""}}
 {"tool":"diff","args":{}}
 {"tool":"stage_config","args":{"update_db":false}}
@@ -123,7 +125,7 @@ class HarnessAgent:
         self.allow_runtime_writes = allow_runtime_writes
         self.max_result_chars = max_result_chars
         self.snapshots = SnapshotStore(workspace)
-        self.metadata_editor = ExtendedMetadataEditor(workspace)
+        self.semantic_tools = SemanticToolExecutor(workspace)
         self.index = ConfigurationIndex.build(workspace.root)
         self._source_changed = False
         self._diff_seen = False
@@ -246,75 +248,10 @@ class HarnessAgent:
             self._mark_source_change(snapshot.snapshot_id)
             return f"Patched {path}. snapshot_id={snapshot.snapshot_id}"
 
-        semantic_tools = {
-            "create_catalog",
-            "create_document_meta",
-            "create_enum",
-            "add_enum_value",
-            "add_attribute",
-            "add_tabular_section",
-            "ensure_module",
-        }
-        if tool in semantic_tools:
+        if tool in SEMANTIC_TOOLS:
             if not self.allow_writes:
                 return "ERROR: source writes are disabled. Run agent with --write."
-            if tool == "create_catalog":
-                change = self.metadata_editor.create_catalog(
-                    str(args.get("name", "")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                    hierarchical=bool(args.get("hierarchical", False)),
-                )
-            elif tool == "create_document_meta":
-                change = self.metadata_editor.create_document(
-                    str(args.get("name", "")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                    posting=bool(args.get("posting", False)),
-                )
-            elif tool == "create_enum":
-                values = args.get("values", [])
-                if not isinstance(values, list):
-                    raise AgentProtocolError("values must be an array")
-                change = self.metadata_editor.create_enum(
-                    str(args.get("name", "")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                    values=values,
-                )
-            elif tool == "add_enum_value":
-                change = self.metadata_editor.add_enum_value(
-                    str(args.get("enum_name", "")),
-                    str(args.get("name", "")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                )
-            elif tool == "add_attribute":
-                change = self.metadata_editor.add_attribute(
-                    str(args.get("kind", "")),
-                    str(args.get("object_name", "")),
-                    str(args.get("name", "")),
-                    value_type=str(args.get("value_type", "string")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                    string_length=int(args.get("string_length", 100)),
-                    digits=int(args.get("digits", 15)),
-                    fraction_digits=int(args.get("fraction_digits", 2)),
-                )
-            elif tool == "add_tabular_section":
-                columns = args.get("columns", [])
-                if not isinstance(columns, list) or not all(isinstance(item, dict) for item in columns):
-                    raise AgentProtocolError("columns must be an array of objects")
-                change = self.metadata_editor.add_tabular_section(
-                    str(args.get("kind", "")),
-                    str(args.get("object_name", "")),
-                    str(args.get("name", "")),
-                    synonym=str(args["synonym"]) if args.get("synonym") is not None else None,
-                    columns=columns,
-                )
-            else:
-                change = self.metadata_editor.ensure_module(
-                    str(args.get("kind", "")),
-                    str(args.get("object_name", "")),
-                    module=str(args.get("module", "object")),
-                    content=str(args.get("content", "")),
-                )
-            return self._semantic_result(change)
+            return self._semantic_result(self.semantic_tools.execute(tool, args))
 
         if tool == "diff":
             self._diff_seen = True
@@ -379,6 +316,7 @@ class HarnessAgent:
                 limit=int(args.get("limit", 200)),
             )
             return self._clip(json.dumps(rows, ensure_ascii=False, default=str))
+
         if tool in {"catalog_items", "document_items"}:
             runtime = self._require_runtime()
             fields = self._string_list(args.get("fields"), label="fields")
@@ -390,6 +328,7 @@ class HarnessAgent:
             }
             rows = runtime.catalog_items(**common) if tool == "catalog_items" else runtime.document_items(**common)
             return self._clip(json.dumps(rows, ensure_ascii=False, default=str))
+
         if tool == "register_records":
             rows = self._require_runtime().register_records(
                 str(args.get("kind", "")),
