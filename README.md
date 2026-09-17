@@ -2,7 +2,7 @@
 
 Model-agnostic AI harness and desktop review app for safe development and automation of **1C:Enterprise**.
 
-The target is a local **“Codex / Claude Code for 1C”**: an agent that understands 1C metadata and BSL, edits configuration sources, validates them in a disposable staging infobase, can inspect runtime data through `V83.COMConnector`, and prepares UI tests for the standard 1C Test Client/Test Manager stack.
+The target is a local **“Codex / Claude Code for 1C”**: an agent that understands 1C metadata and BSL, edits configuration sources, validates them in a disposable staging infobase, inspects runtime data through `V83.COMConnector`, and can execute UI scenarios through the standard 1C Test Client/Test Manager stack.
 
 ## Architecture
 
@@ -16,77 +16,44 @@ GigaChat / OpenAI / DeepSeek / Anthropic / compatible API
  metadata + BSL      Workspace            Runtime 1C
  semantic API         sandbox             adapters
       |                  |                    |
- create objects      snapshot/diff      Designer staging
- add attributes      accept/reject      COMConnector
- create modules                          Test Client/Manager
+ objects/attributes  snapshot/diff      Designer staging
+ enums/tabulars      accept/reject      COMConnector
+                                        Test Client/Manager
 ```
 
 The model receives an allowlisted tool protocol. It never gets arbitrary shell access or direct SQL access to the 1C database.
 
-## What works now — v0.2
+## What works now
 
 ### AI / source engineering
 
-- provider abstraction for GigaChat 3 Ultra, OpenAI, DeepSeek, Anthropic and generic OpenAI-compatible APIs;
+- GigaChat 3 Ultra, OpenAI, DeepSeek, Anthropic and generic OpenAI-compatible providers;
 - safe source workspace with path-escape protection;
-- BSL/XML search and reading;
-- metadata index for common 1C object kinds;
-- BSL procedure/function symbol index;
+- BSL/XML search and metadata/symbol indexing;
 - exact one-match patches;
-- persistent snapshot before every source/metadata mutation;
-- git diff including newly-created metadata files;
-- explicit snapshot restore and git rollback.
+- persistent snapshots before source/metadata mutations;
+- git diff and explicit snapshot restore/rollback;
+- staging-only autonomous validation with `LoadConfigFromFiles`, `CheckModules` and `CheckConfig`.
 
 ### Semantic metadata API
 
-The agent no longer has to hand-edit raw XML for the common creation path. Current high-level tools include:
+Current high-level mutations include:
 
 ```text
 create_catalog
 create_document_meta
+create_enum
+add_enum_value
 add_attribute
+add_tabular_section
 ensure_module
 ```
 
-`create_catalog` and `create_document_meta` create hierarchical 1C XML objects, generated type UUIDs and the corresponding `Configuration.xml` child entry. `add_attribute` supports basic primitive types plus common 1C reference types. Every operation is snapshotted first.
+The common object creation path therefore does not require the model to hand-edit raw XML. Generated metadata is still treated as untrusted until 1C Designer loads and validates it.
 
-The generated source is still treated as untrusted until 1C Designer itself loads and validates it.
+### COMConnector runtime
 
-### Real staging validation
-
-A key safety rule is now enforced: **the autonomous check loop never loads staged sources into the primary infobase**.
-
-Set a disposable copy:
-
-```env
-ONEC_STAGING_IB_CONNECTION=/F "C:\1c\harness-staging"
-```
-
-Then the agent loop is:
-
-```text
-inspect
-  -> snapshot
-  -> patch / semantic metadata mutation
-  -> diff
-  -> LoadConfigFromFiles into STAGING (-updateConfigDumpInfo)
-  -> CheckModules
-  -> CheckConfig
-  -> fix and repeat on error
-  -> human review
-```
-
-With `--check`, the agent cannot finish after a source change until staging load, `CheckModules` and `CheckConfig` have all succeeded.
-
-### COMConnector runtime adapter
-
-On Windows, install the optional runtime dependency:
-
-```powershell
-pip install -e ".[windows,dev]"
-```
-
-The adapter uses `V83.COMConnector` and exposes read-oriented helpers:
+Read-oriented tools use `V83.COMConnector` and the 1C query language rather than direct DBMS SQL:
 
 ```text
 runtime_query
@@ -95,36 +62,27 @@ document_items
 register_records
 ```
 
-Queries use the 1C query language through the platform, not SQL against the underlying DBMS.
+Runtime writes are disabled by default and require both `ONEC_RUNTIME_ALLOW_WRITES=true` and an explicit write flag/confirmation.
 
-Runtime mutations exist but are double opt-in:
+### Executable Test Manager E2E runner
 
-```env
-ONEC_RUNTIME_ALLOW_WRITES=true
+The harness can compile a JSON UI scenario to BSL and can now also prepare a temporary external data processor that executes the scenario in Test Manager.
+
+The E2E path is:
+
+```text
+scenario JSON
+   -> ScenarioCompiler (TestedApplication / TestedForm / fields / buttons)
+   -> temporary external processor source
+   -> Designer /LoadExternalDataProcessorOrReportFromFiles
+   -> runner.epf
+   -> Test Client /TestClient
+   -> wait for test port
+   -> Test Manager /TestManager /Execute runner.epf
+   -> structured OK / FAILED result
 ```
 
-and the caller must additionally pass `--runtime-write` / `--yes` depending on the command. They are disabled in normal operation.
-
-### Test Client / Test Manager adapter
-
-The harness can build and launch the standard 1C modes:
-
-```powershell
-onec-harness test-client
-onec-harness test-client --execute
-onec-harness test-manager
-onec-harness test-manager --execute
-```
-
-The Test Client never silently falls back to the primary DB. Configure either:
-
-```env
-ONEC_TEST_CLIENT_CONNECTION=/F "C:\1c\ui-test"
-```
-
-or let it use `ONEC_STAGING_IB_CONNECTION`.
-
-There is also a small UI-test DSL compiler. A JSON action list such as:
+Example scenario:
 
 ```json
 [
@@ -135,28 +93,35 @@ There is also a small UI-test DSL compiler. A JSON action list such as:
 ]
 ```
 
-can be compiled to Test Manager BSL:
+Compile only:
 
 ```powershell
 onec-harness compile-test-scenario scenario.json -o generated-test.bsl
 ```
 
-The generated BSL uses `TestedApplication`, `TestedForm`, `TestedFormField` and `TestedFormButton` rather than screen coordinates.
+Build/execute the real runner:
 
-**Current boundary:** the harness launches Test Client/Test Manager and generates the BSL scenario, but does not yet inject and execute that generated procedure inside an arbitrary Test Manager infobase automatically. That is the next E2E integration step and requires a real Windows + 1C test environment.
+```powershell
+onec-harness run-test-scenario scenario.json
+onec-harness run-test-scenario scenario.json --execute --yes
+```
+
+The agent also has the `run_ui_test` tool when started with `--ui-test`.
+
+For changed source/metadata, `run_ui_test` is blocked until `stage_config` has succeeded with `update_db=true`, so the UI test runs against an updated disposable copy rather than stale metadata.
 
 ## Safety model
 
-- primary-infobase apply is never part of the autonomous validation loop;
+- autonomous source validation never loads into the primary infobase;
 - `--check` requires `ONEC_STAGING_IB_CONNECTION`;
-- Test Client targets only an explicit test connection or staging;
+- Test Client targets an explicit test connection or staging and never silently falls back to primary;
+- generated E2E runner EPFs are compiled through the staging Designer connection;
 - the model never receives unrestricted shell access;
 - workspace paths cannot escape `ONEC_WORKSPACE`;
-- every mutation gets a snapshot before changes are written;
-- COM writes are disabled by default and require two independent opt-ins;
+- every metadata/source mutation receives a snapshot;
+- COM writes require two opt-ins;
 - primary configuration load requires explicit `--execute --yes`;
-- `.dt` backup is available before an approved primary apply;
-- Designer commands have timeouts and captured logs.
+- `.dt` backup is available before an approved primary apply.
 
 ## Quick start on Windows
 
@@ -178,6 +143,11 @@ ONEC_EXE=C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe
 ONEC_IB_CONNECTION=/F "C:\1c\dev"
 ONEC_STAGING_IB_CONNECTION=/F "C:\1c\harness-staging"
 ONEC_WORKSPACE=C:\projects\my-config-export
+
+# For real UI E2E:
+ONEC_TEST_MANAGER_CONNECTION=/F "C:\1c\test-manager"
+# Optional; otherwise Test Client uses staging:
+ONEC_TEST_CLIENT_CONNECTION=/F "C:\1c\ui-test"
 ```
 
 Useful commands:
@@ -190,10 +160,12 @@ onec-harness symbols Проведение
 
 onec-harness agent "Найди причину ошибки проведения"
 onec-harness agent "Исправь проверку остатков" --write --check
+onec-harness agent "Исправь форму и проверь её" --write --check --ui-test
 
 onec-harness create-catalog Оборудование --yes
-onec-harness add-attribute catalog Оборудование СерийныйНомер --yes
-onec-harness stage-config --execute --yes
+onec-harness create-enum Статусы --values '["Новый","Закрыт"]' --yes
+onec-harness add-tabular-section document Заявка Товары --columns '[{"name":"Товар","value_type":"CatalogRef.Товары"}]' --yes
+onec-harness stage-config --execute --yes --update-db
 
 onec-harness runtime-query "ВЫБРАТЬ ПЕРВЫЕ 10 Код, Наименование ИЗ Справочник.Товары" --fields Код,Наименование
 onec-harness backup-infobase C:\backups\before-harness.dt --execute --yes
@@ -209,17 +181,15 @@ Add `--update-db` only when you intentionally want to update the primary databas
 
 ## Desktop application
 
-`desktop/` is a Tauri 2 + React/TypeScript application inspired by an IDE/code-agent review workflow.
-
-Current flow:
+`desktop/` is a Tauri 2 + React/TypeScript review application:
 
 - left pane: task/chat + visible agent steps;
 - right pane: Monaco review of the actual patch fragment or generated workspace diff;
 - source mutations run with snapshots;
-- when staging is configured, the desktop agent automatically requests the staging validation loop;
+- staging validation is automatically requested when configured;
 - **Принять** leaves the reviewed change in the local workspace;
-- **Отклонить** restores every snapshot from the current run in reverse order;
-- applying anything to the primary 1C base is still a separate operation.
+- **Отклонить** restores snapshots from the run in reverse order;
+- applying to the primary 1C base remains separate.
 
 Run:
 
@@ -231,29 +201,15 @@ npm run tauri dev
 
 Set `ONEC_HARNESS_BIN` if `onec-harness` is not available on `PATH`.
 
-## Providers
-
-### GigaChat
-
-Default model: `GigaChat-3-Ultra`.
-
-### OpenAI / DeepSeek / compatible APIs
-
-Use the generic OpenAI-compatible adapter with the desired base URL, API key and model.
-
-### Anthropic
-
-Anthropic uses a dedicated Messages API adapter.
-
 ## Roadmap to v1
 
-1. **Test Manager E2E runner** — automatically execute the generated Test Manager scenario and return structured assertions/logs to the agent.
-2. **Broader semantic metadata API** — registers, enums, forms, tabular sections, extensions and safe reference/dependency navigation.
-3. **Runtime semantics** — richer typed object retrieval and explicit server-function contracts.
-4. **MCP server** — expose the same safe tool registry to Codex, Claude, ChatGPT-compatible clients and other agents.
-5. **Desktop production flow** — streaming tool events, multiple real diff tabs, staging/apply controls and UI test results.
-6. **Windows E2E CI/runner** — automated smoke tests against an installed 1C platform and disposable infobase.
+1. **Windows E2E validation** — run the new EPF/Test Manager path on a real installed 1C platform and harden startup/cleanup/result collection.
+2. **Broader semantic metadata API** — information/accumulation registers, managed forms and configuration extensions.
+3. **Richer UI test DSL** — table rows, selections, dialogs, assertions, screenshots/log artifacts and multi-client scenarios.
+4. **Runtime semantics** — richer typed retrieval and explicit server-function contracts.
+5. **MCP server** — expose the same safe tool registry to Codex, Claude, ChatGPT-compatible clients and other agents.
+6. **Desktop production flow** — streaming tool events, multiple diff tabs, staging/apply controls and E2E test result cards.
 
 ## Status
 
-`v0.2` is an active alpha-oriented prototype. Python and desktop TypeScript/Vite builds are covered by CI. Real COM and Test Client/Test Manager E2E execution must be validated on a Windows host with 1C installed. Use disposable copies for staging/testing and do not point autonomous runtime-write flows at production.
+The project is an alpha-oriented prototype. Python and desktop TypeScript/Vite builds are covered by CI. Real COM and E2E execution still needs validation on a Windows host with 1C installed. Use disposable copies for staging/testing and do not point autonomous runtime-write flows at production.
