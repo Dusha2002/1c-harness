@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     onec_com_progid: str = "V83.COMConnector"
     onec_runtime_allow_writes: bool = False
 
+    # MCP source mutations are a separate opt-in from runtime writes.
+    onec_mcp_allow_writes: bool = False
+
     # Standard 1C automated testing. A Test Client must target a disposable
     # infobase explicitly or fall back to the staging infobase, never primary.
     onec_test_client_connection: str = ""
