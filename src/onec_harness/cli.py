@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from onec_harness.agent import HarnessAgent
 from onec_harness.onec.designer import CommandResult, Designer, DesignerError
 from onec_harness.providers.base import Message, ProviderError
 from onec_harness.providers.factory import create_provider
@@ -93,6 +94,44 @@ def ask(prompt: str) -> None:
     except ProviderError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
+
+
+@app.command()
+def agent(
+    task: str,
+    write: bool = typer.Option(False, "--write", help="Allow the model to patch workspace files"),
+    max_steps: int = typer.Option(12, "--max-steps", min=1, max=50),
+) -> None:
+    """Run the model through the allowlisted 1C source-code tool loop."""
+    settings = _settings()
+    workspace = _workspace(settings)
+
+    async def run():
+        provider = create_provider(settings)
+        harness = HarnessAgent(provider, workspace, allow_writes=write)
+        return await harness.run(task, max_steps=max_steps)
+
+    try:
+        result = asyncio.run(run())
+    except (ProviderError, WorkspaceError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Agent steps")
+    table.add_column("#", justify="right")
+    table.add_column("Tool")
+    table.add_column("Result")
+    for index, step in enumerate(result.steps, start=1):
+        compact = step.result.replace("\n", " ")
+        if len(compact) > 160:
+            compact = compact[:157] + "..."
+        table.add_row(str(index), step.tool, compact)
+    if result.steps:
+        console.print(table)
+    console.print("[bold]Summary:[/bold]")
+    console.print(result.summary)
+    if not write:
+        console.print("[yellow]Read-only mode: patches were not permitted.[/yellow]")
 
 
 @app.command("read")
