@@ -15,7 +15,6 @@ METADATA_KINDS = {
     "BusinessProcesses": "business_process",
     "Tasks": "task",
     "Enums": "enum",
-    # Older/custom exporters sometimes use this folder name; keep it readable.
     "Enumerations": "enum",
     "CommonModules": "common_module",
     "Reports": "report",
@@ -64,7 +63,7 @@ class ConfigurationIndex:
         modules_by_object: dict[tuple[str, str], list[str]] = {}
 
         for path in root.rglob("*.bsl"):
-            if not path.is_file():
+            if not path.is_file() or ".onec-harness" in path.parts:
                 continue
             relative = path.relative_to(root)
             parts = relative.parts
@@ -86,13 +85,23 @@ class ConfigurationIndex:
                 name = definition.stem
                 modules = tuple(sorted(modules_by_object.get((folder, name), [])))
                 index.objects.append(
-                    MetadataObject(
-                        kind=kind,
-                        name=name,
-                        definition_path=str(definition.relative_to(root)),
-                        modules=modules,
-                    )
+                    MetadataObject(kind=kind, name=name, definition_path=str(definition.relative_to(root)), modules=modules)
                 )
+                forms_dir = folder_path / name / "Forms"
+                if not forms_dir.exists():
+                    continue
+                for form_definition in sorted(forms_dir.glob("*.xml")):
+                    form_name = form_definition.stem
+                    form_module = forms_dir / form_name / "Ext" / "Form" / "Module.bsl"
+                    form_modules = (str(form_module.relative_to(root)),) if form_module.exists() else ()
+                    index.objects.append(
+                        MetadataObject(
+                            kind="form",
+                            name=f"{kind}.{name}.{form_name}",
+                            definition_path=str(form_definition.relative_to(root)),
+                            modules=form_modules,
+                        )
+                    )
 
         index.objects.sort(key=lambda item: (item.kind, item.name.casefold()))
         index.symbols.sort(key=lambda item: (item.name.casefold(), item.path, item.line))
