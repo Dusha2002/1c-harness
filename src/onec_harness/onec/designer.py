@@ -48,6 +48,17 @@ class Designer:
         tokens = re.findall(r'"[^"]*"|\S+', raw)
         return [token[1:-1] if len(token) >= 2 and token[0] == token[-1] == '"' else token for token in tokens]
 
+    @staticmethod
+    def _extension_args(extension: str | None = None, *, all_extensions: bool = False) -> list[str]:
+        if extension and all_extensions:
+            raise DesignerError("extension and all_extensions are mutually exclusive")
+        if extension:
+            name = extension.strip()
+            if not name:
+                raise DesignerError("Extension name cannot be empty")
+            return ["-Extension", name]
+        return ["-AllExtensions"] if all_extensions else []
+
     def _base_command(self) -> list[str]:
         command = [str(self.exe), "DESIGNER"]
         command.extend(self._split_args(self.connection))
@@ -82,9 +93,7 @@ class Designer:
                 raise DesignerError(
                     f"1C Designer command timed out after {self.settings.onec_command_timeout_seconds:g}s"
                 ) from exc
-            log = ""
-            if log_path.exists():
-                log = log_path.read_text(encoding="utf-8-sig", errors="replace")
+            log = log_path.read_text(encoding="utf-8-sig", errors="replace") if log_path.exists() else ""
             return CommandResult(
                 command=command_with_log,
                 returncode=result.returncode,
@@ -94,11 +103,19 @@ class Designer:
                 executed=True,
             )
 
-    def dump_config(self, target: Path, *, execute: bool = False) -> CommandResult:
+    def dump_config(
+        self,
+        target: Path,
+        *,
+        execute: bool = False,
+        extension: str | None = None,
+        all_extensions: bool = False,
+    ) -> CommandResult:
         target = target.expanduser().resolve()
         if execute:
             target.mkdir(parents=True, exist_ok=True)
-        return self._run(["/DumpConfigToFiles", str(target)], execute=execute)
+        action = ["/DumpConfigToFiles", str(target), *self._extension_args(extension, all_extensions=all_extensions)]
+        return self._run(action, execute=execute)
 
     def load_config(
         self,
@@ -107,12 +124,25 @@ class Designer:
         execute: bool = False,
         update_db: bool = False,
         update_dump_info: bool = False,
+        extension: str | None = None,
+        all_extensions: bool = False,
     ) -> CommandResult:
-        action = ["/LoadConfigFromFiles", str(source.expanduser().resolve())]
+        action = [
+            "/LoadConfigFromFiles",
+            str(source.expanduser().resolve()),
+            *self._extension_args(extension, all_extensions=all_extensions),
+        ]
         if update_dump_info:
             action.append("-updateConfigDumpInfo")
         if update_db:
             action.append("/UpdateDBCfg")
+        return self._run(action, execute=execute)
+
+    def dump_cfg(self, target: Path, *, execute: bool = False, extension: str | None = None) -> CommandResult:
+        target = target.expanduser().resolve()
+        if execute:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        action = ["/DumpCfg", str(target), *self._extension_args(extension)]
         return self._run(action, execute=execute)
 
     def build_external_processor(
@@ -150,8 +180,10 @@ class Designer:
         server: bool = True,
         external_connection: bool = True,
         extended: bool = True,
+        extension: str | None = None,
+        all_extensions: bool = False,
     ) -> CommandResult:
-        action = ["/CheckModules"]
+        action = ["/CheckModules", *self._extension_args(extension, all_extensions=all_extensions)]
         if thin_client:
             action.append("-ThinClient")
         if server:
@@ -170,8 +202,10 @@ class Designer:
         incorrect_references: bool = True,
         handlers: bool = True,
         unreferenced_procedures: bool = True,
+        extension: str | None = None,
+        all_extensions: bool = False,
     ) -> CommandResult:
-        action = ["/CheckConfig"]
+        action = ["/CheckConfig", *self._extension_args(extension, all_extensions=all_extensions)]
         if check_integrity:
             action.append("-ConfigLogIntegrity")
         if incorrect_references:
@@ -180,4 +214,8 @@ class Designer:
             action.append("-HandlersExistence")
         if unreferenced_procedures:
             action.append("-UnreferenceProcedures")
+        return self._run(action, execute=execute)
+
+    def check_extension_applicability(self, extension: str, *, execute: bool = False) -> CommandResult:
+        action = ["/CheckCanApplyConfigurationExtensions", *self._extension_args(extension)]
         return self._run(action, execute=execute)
