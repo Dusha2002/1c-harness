@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from onec_harness.extensions import ExtensionSourceManager
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.onec.com import ComConnector, ComConnectorError
 from onec_harness.onec.designer import Designer, DesignerError
@@ -17,63 +18,39 @@ from onec_harness.workspace import Workspace, WorkspaceError
 
 
 SYSTEM_PROMPT = """Ты автономный инженер по 1С:Предприятие/BSL, работающий через безопасный harness.
-Исследуй реальную конфигурацию и выполняй запрос минимальными, проверяемыми изменениями.
-Не выдумывай имена объектов, модулей, процедур, реквизитов или полей: сначала используй metadata/symbols/search/read.
+Сначала исследуй реальную конфигурацию через metadata/symbols/search/read. Не выдумывай имена объектов и полей.
+На каждом шаге отвечай только одним JSON-объектом: {"tool":"...","args":{...}}.
 
-На каждом шаге отвечай ТОЛЬКО одним JSON-объектом без Markdown.
-Основные действия:
-{"tool":"metadata","args":{"query":"Заказ"}}
-{"tool":"symbols","args":{"query":"Проведение"}}
-{"tool":"search","args":{"query":"строка"}}
-{"tool":"read","args":{"path":"relative/path.bsl"}}
-{"tool":"patch","args":{"path":"relative/path.bsl","old":"точный старый фрагмент","new":"новый фрагмент"}}
-{"tool":"create_catalog","args":{"name":"Оборудование","synonym":"Оборудование","hierarchical":false}}
-{"tool":"create_document_meta","args":{"name":"Заявка","synonym":"Заявка","posting":false}}
-{"tool":"create_enum","args":{"name":"Статусы","values":["Новый","Закрыт"]}}
-{"tool":"add_enum_value","args":{"enum_name":"Статусы","name":"Отменен","synonym":"Отменен"}}
-{"tool":"add_attribute","args":{"kind":"catalog","object_name":"Оборудование","name":"СерийныйНомер","value_type":"string","string_length":100}}
-{"tool":"add_tabular_section","args":{"kind":"document","object_name":"Заявка","name":"Товары","columns":[{"name":"Товар","value_type":"CatalogRef.Товары"},{"name":"Количество","value_type":"number","digits":15,"fraction_digits":3}]}}
-{"tool":"create_information_register","args":{"name":"Цены","periodicity":"Nonperiodical","write_mode":"Independent","dimensions":[{"name":"Товар","value_type":"CatalogRef.Товары","main_filter":true}],"resources":[{"name":"Цена","value_type":"number","digits":15,"fraction_digits":2}]}}
-{"tool":"create_accumulation_register","args":{"name":"ОстаткиТоваров","register_type":"Balance","dimensions":[{"name":"Товар","value_type":"CatalogRef.Товары"}],"resources":[{"name":"Количество","value_type":"number","digits":15,"fraction_digits":3}]}}
-{"tool":"ensure_module","args":{"kind":"catalog","object_name":"Оборудование","module":"object","content":""}}
-{"tool":"diff","args":{}}
-{"tool":"stage_config","args":{"update_db":false}}
-{"tool":"check_modules","args":{}}
-{"tool":"check_config","args":{}}
-{"tool":"rollback","args":{"snapshot_id":"id из результата изменения"}}
+Основные source tools: metadata, symbols, search, read, patch, diff, rollback.
+Semantic metadata tools: create_catalog, create_document_meta, create_enum, add_enum_value, add_attribute,
+add_tabular_section, create_information_register, create_accumulation_register, create_managed_form,
+add_form_input, add_form_command, ensure_module.
+Примеры форм:
+{"tool":"create_managed_form","args":{"kind":"document","object_name":"Заявка","name":"ФормаДокумента","purpose":"Object","set_default":true}}
+{"tool":"add_form_input","args":{"kind":"document","object_name":"Заявка","form_name":"ФормаДокумента","name":"Комментарий","data_path":"Объект.Комментарий"}}
+{"tool":"add_form_command","args":{"kind":"document","object_name":"Заявка","form_name":"ФормаДокумента","name":"Проверить","handler_body":"Сообщить(\"OK\");"}}
 
-Read-only runtime tools (через 1С, не SQL к СУБД):
-{"tool":"runtime_query","args":{"text":"ВЫБРАТЬ ...","fields":["Поле"],"parameters":{},"limit":100}}
-{"tool":"catalog_items","args":{"name":"Контрагенты","fields":["Ссылка","Код","Наименование"],"filters":{},"limit":50}}
-{"tool":"document_items","args":{"name":"ЗаказПокупателя","fields":["Ссылка","Дата","Номер"],"filters":{},"limit":50}}
-{"tool":"register_records","args":{"kind":"accumulation","name":"ТоварыНаСкладах","fields":["Товар","Количество"],"filters":{},"limit":50}}
+Расширения (исходники должны быть выгружены в Extensions/<Имя>):
+{"tool":"borrow_extension_object","args":{"extension":"МоеРасширение","kind":"document","object_name":"Заказ"}}
+{"tool":"patch_extension_method","args":{"extension":"МоеРасширение","kind":"document","object_name":"Заказ","method_name":"ОбработкаПроведения","interceptor":"Before","module":"object","parameters":["Отказ","РежимПроведения"],"body":"// код"}}
+{"tool":"stage_extension","args":{"extension":"МоеРасширение","update_db":false}}
+{"tool":"check_extension_modules","args":{"extension":"МоеРасширение"}}
+{"tool":"check_extension_config","args":{"extension":"МоеРасширение"}}
+{"tool":"check_extension_applicability","args":{"extension":"МоеРасширение"}}
 
-Runtime write tools существуют только при явном разрешении пользователя:
-{"tool":"create_catalog_item","args":{"name":"Оборудование","attributes":{"Наименование":"Тест"}}}
-{"tool":"create_document_record","args":{"name":"Заявка","attributes":{},"post":false}}
-
-UI testing:
-{"tool":"ui_test_scenario","args":{"actions":[{"action":"execute_command","link":"e1cib/command/Catalog.Оборудование.Create"},{"action":"wait_form","title":"Оборудование*"}]}}
-{"tool":"run_ui_test","args":{"actions":[{"action":"execute_command","link":"e1cib/command/Catalog.Оборудование.Create"},{"action":"wait_form","title":"Оборудование*"}]}}
-
-Завершение:
-{"tool":"finish","args":{"summary":"что сделано и как проверено"}}
+Основная конфигурация: stage_config -> check_modules -> check_config.
+Read-only runtime: runtime_query, catalog_items, document_items, register_records.
+Runtime writes: create_catalog_item, create_document_record — только при явном разрешении.
+UI: ui_test_scenario генерирует BSL; run_ui_test реально запускает Test Client/Test Manager.
+Завершение: {"tool":"finish","args":{"summary":"что сделано и как проверено"}}.
 
 Правила:
-- Любое изменение исходников автоматически получает snapshot.
-- patch должен быть минимальным, old должен встречаться ровно один раз.
-- Для создания/изменения метаданных предпочитай semantic tools вместо ручного редактирования XML.
-- Никогда не используй абсолютные пути и ../.
-- После любого изменения исходников обязательно вызови diff.
-- Если включена проверка 1С: после изменения вызови stage_config, затем check_modules И check_config.
-- stage_config работает только с отдельной staging-инфобазой; не загружай изменения в основную базу.
-- Если stage/check вернул ошибку, изучи лог, исправь исходники и повтори полный цикл stage/check.
-- update_db=true допустим только для staging и обязателен перед E2E UI тестом изменённых метаданных/кода.
-- Runtime-запись не выполняй без явного разрешения; read-only tools можно использовать для диагностики.
-- ui_test_scenario только генерирует BSL. run_ui_test реально собирает EPF и запускает Test Client/Test Manager.
-- Для задач, меняющих пользовательский UI/формы/интерактивное поведение, при доступном run_ui_test предпочитай фактический E2E тест.
-- Если run_ui_test был запущен и упал, не завершай задачу как успешную: исправь или откати изменение.
-- Не утверждай об успешной проверке, если harness не вернул OK.
+- Все source/metadata изменения должны иметь snapshot.
+- После изменений обязательно diff.
+- При --check нельзя finish, пока каждый изменённый scope (config или extension) не прошёл stage + CheckModules + CheckConfig.
+- Основная база никогда не используется для автономной проверки; только staging.
+- Для E2E после изменённых исходников нужен stage с update_db=true для каждого изменённого scope.
+- Не утверждай успех проверки без OK от harness.
 """
 
 
@@ -91,6 +68,14 @@ class AgentResult:
     snapshots: list[str] = field(default_factory=list)
     checks_ok: bool | None = None
     ui_test_ok: bool | None = None
+
+
+@dataclass(slots=True)
+class _ValidationState:
+    stage_ok: bool | None = None
+    db_updated: bool = False
+    modules_ok: bool | None = None
+    config_ok: bool | None = None
 
 
 class AgentProtocolError(RuntimeError):
@@ -126,14 +111,14 @@ class HarnessAgent:
         self.max_result_chars = max_result_chars
         self.snapshots = SnapshotStore(workspace)
         self.semantic_tools = SemanticToolExecutor(workspace)
+        self.extension_tools = ExtensionSourceManager(workspace)
         self.index = ConfigurationIndex.build(workspace.root)
         self._source_changed = False
+        self._config_changed = False
+        self._extension_changed: set[str] = set()
         self._diff_seen = False
-        self._stage_attempted = False
-        self._stage_ok: bool | None = None
-        self._stage_db_updated = False
-        self._module_check_ok: bool | None = None
-        self._config_check_ok: bool | None = None
+        self._config_validation = _ValidationState()
+        self._extension_validation: dict[str, _ValidationState] = {}
         self._ui_test_attempted = False
         self._ui_test_ok: bool | None = None
         self._snapshot_ids: list[str] = []
@@ -142,21 +127,18 @@ class HarnessAgent:
     def _parse_action(text: str) -> dict[str, Any]:
         candidate = text.strip()
         if candidate.startswith("```"):
-            lines = candidate.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
+            lines = candidate.splitlines()[1:]
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             candidate = "\n".join(lines).strip()
         try:
             action = json.loads(candidate)
         except json.JSONDecodeError:
-            start = candidate.find("{")
-            end = candidate.rfind("}")
+            start, end = candidate.find("{"), candidate.rfind("}")
             if start < 0 or end <= start:
                 raise AgentProtocolError("Model did not return a JSON action") from None
             try:
-                action = json.loads(candidate[start : end + 1])
+                action = json.loads(candidate[start:end + 1])
             except json.JSONDecodeError as exc:
                 raise AgentProtocolError("Model returned invalid JSON action") from exc
         if not isinstance(action, dict) or not isinstance(action.get("tool"), str):
@@ -168,9 +150,7 @@ class HarnessAgent:
         return action
 
     def _clip(self, value: str) -> str:
-        if len(value) <= self.max_result_chars:
-            return value
-        return value[: self.max_result_chars] + "\n...[truncated by harness]"
+        return value if len(value) <= self.max_result_chars else value[:self.max_result_chars] + "\n...[truncated by harness]"
 
     @staticmethod
     def _format_check(name: str, ok: bool, output: str) -> str:
@@ -196,30 +176,57 @@ class HarnessAgent:
             raise AgentProtocolError("actions must be an array of objects")
         return value
 
-    def _reset_validation(self) -> None:
-        self._diff_seen = False
-        self._stage_attempted = False
-        self._stage_ok = None
-        self._stage_db_updated = False
-        self._module_check_ok = None
-        self._config_check_ok = None
-        self._ui_test_attempted = False
-        self._ui_test_ok = None
-
-    def _mark_source_change(self, snapshot_id: str) -> None:
+    def _touch_common(self, snapshot_id: str) -> None:
         self._source_changed = True
         self._snapshot_ids.append(snapshot_id)
-        self._reset_validation()
+        self._diff_seen = False
+        self._ui_test_attempted = False
+        self._ui_test_ok = None
         self.index = ConfigurationIndex.build(self.workspace.root)
+
+    def _mark_source_change(self, snapshot_id: str) -> None:
+        self._touch_common(snapshot_id)
+        self._config_changed = True
+        self._config_validation = _ValidationState()
+
+    def _mark_extension_change(self, extension: str, change: Any) -> str:
+        self._touch_common(change.snapshot_id)
+        self._extension_changed.add(extension)
+        self._extension_validation[extension] = _ValidationState()
+        return f"{change.summary}. snapshot_id={change.snapshot_id}; paths={', '.join(change.paths)}"
 
     def _semantic_result(self, change: Any) -> str:
         self._mark_source_change(change.snapshot_id)
         return f"{change.summary}. snapshot_id={change.snapshot_id}; paths={', '.join(change.paths)}"
 
+    def _recompute_scopes(self) -> None:
+        paths = self.workspace.changed_paths()
+        extensions: set[str] = set()
+        config_changed = False
+        for path in paths:
+            parts = path.replace("\\", "/").split("/")
+            if len(parts) >= 3 and parts[0] == "Extensions":
+                extensions.add(parts[1])
+            else:
+                config_changed = True
+        self._source_changed = bool(paths)
+        self._config_changed = config_changed
+        self._extension_changed = extensions
+        self._config_validation = _ValidationState()
+        self._extension_validation = {name: _ValidationState() for name in extensions}
+        self._diff_seen = False
+
     def _require_runtime(self) -> ComConnector:
         if self.runtime is None:
             raise ComConnectorError("COM runtime adapter is not configured")
         return self.runtime
+
+    def _require_checks(self) -> Designer:
+        if not self.execute_checks:
+            raise DesignerError("1C checks are disabled. Run agent with --check.")
+        if self.designer is None:
+            raise DesignerError("staging Designer is not configured")
+        return self.designer
 
     def _execute_tool(self, tool: str, args: dict[str, Any]) -> str:
         if tool == "metadata":
@@ -231,16 +238,12 @@ class HarnessAgent:
             return self._clip("\n".join(f"{m.path}:{m.line}: {m.text}" for m in matches) or "No matches")
         if tool == "read":
             path = str(args.get("path", ""))
-            if not path:
-                return "ERROR: path is required"
-            return self._clip(self.workspace.read_text(path))
+            return self._clip(self.workspace.read_text(path)) if path else "ERROR: path is required"
 
         if tool == "patch":
             if not self.allow_writes:
                 return "ERROR: source writes are disabled. Run agent with --write."
-            path = str(args.get("path", ""))
-            old = str(args.get("old", ""))
-            new = str(args.get("new", ""))
+            path, old, new = str(args.get("path", "")), str(args.get("old", "")), str(args.get("new", ""))
             if not path or not old:
                 return "ERROR: patch requires path and non-empty old text"
             snapshot = self.snapshots.create([path])
@@ -253,47 +256,96 @@ class HarnessAgent:
                 return "ERROR: source writes are disabled. Run agent with --write."
             return self._semantic_result(self.semantic_tools.execute(tool, args))
 
+        if tool in {"borrow_extension_object", "patch_extension_method"}:
+            if not self.allow_writes:
+                return "ERROR: source writes are disabled. Run agent with --write."
+            extension = str(args.get("extension", ""))
+            if tool == "borrow_extension_object":
+                change = self.extension_tools.borrow_object(
+                    extension,
+                    str(args.get("kind", "")),
+                    str(args.get("object_name", "")),
+                )
+            else:
+                params = args.get("parameters")
+                parameters = self._string_list(params, label="parameters") if params is not None else None
+                change = self.extension_tools.patch_method(
+                    extension,
+                    str(args.get("kind", "")),
+                    str(args.get("object_name", "")),
+                    str(args.get("method_name", "")),
+                    interceptor=str(args.get("interceptor", "Before")),
+                    module=str(args.get("module", "object")),
+                    handler_name=str(args["handler_name"]) if args.get("handler_name") is not None else None,
+                    parameters=parameters,
+                    body=str(args.get("body", "// TODO: implement")),
+                    context=str(args["context"]) if args.get("context") is not None else None,
+                    function=bool(args.get("function", False)),
+                )
+            return self._mark_extension_change(extension, change)
+
         if tool == "diff":
             self._diff_seen = True
             return self._clip(self.workspace.git_diff() or "No changes")
 
         if tool == "stage_config":
-            if not self.execute_checks:
-                return "ERROR: staging is disabled. Run agent with --check and configure staging DB."
-            if self.designer is None:
-                return "ERROR: staging Designer is not configured"
+            designer = self._require_checks()
             update_db = bool(args.get("update_db", False))
-            result = self.designer.load_config(
-                self.workspace.root,
-                execute=True,
-                update_db=update_db,
-                update_dump_info=True,
-            )
-            self._stage_attempted = True
-            self._stage_ok = result.ok
-            self._stage_db_updated = bool(result.ok and update_db)
-            self._module_check_ok = None
-            self._config_check_ok = None
-            self._ui_test_attempted = False
-            self._ui_test_ok = None
+            result = designer.load_config(self.workspace.root, execute=True, update_db=update_db, update_dump_info=True)
+            self._config_validation = _ValidationState(stage_ok=result.ok, db_updated=bool(result.ok and update_db))
             output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
             return self._clip(self._format_check("StageConfig", result.ok, output))
 
         if tool in {"check_modules", "check_config"}:
-            if not self.execute_checks:
-                return "ERROR: 1C checks are disabled. Run agent with --check."
-            if self.designer is None:
-                return "ERROR: staging Designer is not configured"
-            if self._source_changed and self._stage_ok is not True:
+            designer = self._require_checks()
+            if self._config_changed and self._config_validation.stage_ok is not True:
                 return "ERROR: changed workspace has not been successfully loaded into staging. Call stage_config first."
             if tool == "check_modules":
-                result = self.designer.check_modules(execute=True)
-                self._module_check_ok = result.ok
+                result = designer.check_modules(execute=True)
+                self._config_validation.modules_ok = result.ok
                 label = "CheckModules"
             else:
-                result = self.designer.check_config(execute=True)
-                self._config_check_ok = result.ok
+                result = designer.check_config(execute=True)
+                self._config_validation.config_ok = result.ok
                 label = "CheckConfig"
+            output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
+            return self._clip(self._format_check(label, result.ok, output))
+
+        if tool in {"stage_extension", "check_extension_modules", "check_extension_config", "check_extension_applicability"}:
+            designer = self._require_checks()
+            extension = str(args.get("extension", "")).strip()
+            if not extension:
+                return "ERROR: extension is required"
+            state = self._extension_validation.setdefault(extension, _ValidationState())
+            if tool == "stage_extension":
+                root = self.extension_tools.extension_root(extension)
+                update_db = bool(args.get("update_db", False))
+                result = designer.load_config(
+                    self.workspace.resolve(root),
+                    execute=True,
+                    update_db=update_db,
+                    update_dump_info=True,
+                    extension=extension,
+                )
+                self._extension_validation[extension] = _ValidationState(
+                    stage_ok=result.ok,
+                    db_updated=bool(result.ok and update_db),
+                )
+                label = f"StageExtension[{extension}]"
+            else:
+                if extension in self._extension_changed and state.stage_ok is not True:
+                    return f"ERROR: extension {extension} has not been successfully staged. Call stage_extension first."
+                if tool == "check_extension_modules":
+                    result = designer.check_modules(execute=True, extension=extension)
+                    state.modules_ok = result.ok
+                    label = f"CheckExtensionModules[{extension}]"
+                elif tool == "check_extension_config":
+                    result = designer.check_config(execute=True, extension=extension)
+                    state.config_ok = result.ok
+                    label = f"CheckExtensionConfig[{extension}]"
+                else:
+                    result = designer.check_extension_applicability(extension, execute=True)
+                    label = f"CheckExtensionApplicability[{extension}]"
             output = result.combined_output() or f"1C Designer exited with code {result.returncode}"
             return self._clip(self._format_check(label, result.ok, output))
 
@@ -303,13 +355,11 @@ class HarnessAgent:
                 return "ERROR: snapshot_id is required"
             restored = self.snapshots.restore(snapshot_id)
             self.index = ConfigurationIndex.build(self.workspace.root)
-            self._source_changed = bool(self.workspace.git_diff().strip())
-            self._reset_validation()
+            self._recompute_scopes()
             return f"Restored snapshot {restored.snapshot_id}: {', '.join(restored.paths)}"
 
         if tool == "runtime_query":
-            runtime = self._require_runtime()
-            rows = runtime.query(
+            rows = self._require_runtime().query(
                 str(args.get("text", "")),
                 fields=self._string_list(args.get("fields"), label="fields"),
                 parameters=self._mapping(args.get("parameters"), label="parameters"),
@@ -319,10 +369,9 @@ class HarnessAgent:
 
         if tool in {"catalog_items", "document_items"}:
             runtime = self._require_runtime()
-            fields = self._string_list(args.get("fields"), label="fields")
             common = {
                 "name": str(args.get("name", "")),
-                "fields": fields,
+                "fields": self._string_list(args.get("fields"), label="fields"),
                 "filters": self._mapping(args.get("filters"), label="filters"),
                 "limit": int(args.get("limit", 100)),
             }
@@ -344,14 +393,11 @@ class HarnessAgent:
                 return "ERROR: runtime writes are disabled. They require explicit --runtime-write and environment opt-in."
             runtime = self._require_runtime()
             attributes = self._mapping(args.get("attributes"), label="attributes")
-            if tool == "create_catalog_item":
-                ref = runtime.create_catalog_item(str(args.get("name", "")), attributes)
-            else:
-                ref = runtime.create_document(
-                    str(args.get("name", "")),
-                    attributes,
-                    post=bool(args.get("post", False)),
-                )
+            ref = (
+                runtime.create_catalog_item(str(args.get("name", "")), attributes)
+                if tool == "create_catalog_item"
+                else runtime.create_document(str(args.get("name", "")), attributes, post=bool(args.get("post", False)))
+            )
             return f"Runtime object created: {ref}"
 
         if tool == "ui_test_scenario":
@@ -364,8 +410,11 @@ class HarnessAgent:
                 return "ERROR: E2E UI test execution is disabled. Run agent with --ui-test."
             if self.test_runner is None:
                 return "ERROR: Test Manager E2E runner is not configured"
-            if self._source_changed and self._stage_db_updated is not True:
-                return "ERROR: changed sources require successful stage_config with update_db=true before E2E UI testing."
+            if self._config_changed and not self._config_validation.db_updated:
+                return "ERROR: changed configuration requires stage_config(update_db=true) before E2E UI testing."
+            missing = [name for name in self._extension_changed if not self._extension_validation.get(name, _ValidationState()).db_updated]
+            if missing:
+                return "ERROR: changed extensions require stage_extension(update_db=true) before E2E UI testing: " + ", ".join(sorted(missing))
             result = self.test_runner.run(self._action_list(args.get("actions")), execute=True)
             self._ui_test_attempted = True
             self._ui_test_ok = result.success is True
@@ -376,19 +425,36 @@ class HarnessAgent:
     def _checks_ok(self) -> bool | None:
         if not self.execute_checks or not self._source_changed:
             return None
-        return bool(self._stage_ok and self._module_check_ok and self._config_check_ok)
+        if self._config_changed:
+            state = self._config_validation
+            if not (state.stage_ok and state.modules_ok and state.config_ok):
+                return False
+        for extension in self._extension_changed:
+            state = self._extension_validation.get(extension, _ValidationState())
+            if not (state.stage_ok and state.modules_ok and state.config_ok):
+                return False
+        return True
 
     def _finish_block_reason(self) -> str | None:
-        if self._source_changed:
-            if not self._diff_seen:
-                return "You changed files but have not inspected diff yet. Call diff before finish."
-            if self.execute_checks:
-                if not self._stage_attempted or self._stage_ok is not True:
-                    return "Changed files are not successfully loaded into staging. Call stage_config and fix any error."
-                if self._module_check_ok is not True:
+        if self._source_changed and not self._diff_seen:
+            return "You changed files but have not inspected diff yet. Call diff before finish."
+        if self.execute_checks:
+            if self._config_changed:
+                state = self._config_validation
+                if state.stage_ok is not True:
+                    return "Changed configuration is not staged successfully. Call stage_config."
+                if state.modules_ok is not True:
                     return "Run check_modules successfully against staging before finish."
-                if self._config_check_ok is not True:
+                if state.config_ok is not True:
                     return "Run check_config successfully against staging before finish."
+            for extension in sorted(self._extension_changed):
+                state = self._extension_validation.get(extension, _ValidationState())
+                if state.stage_ok is not True:
+                    return f"Extension {extension} is not staged successfully. Call stage_extension."
+                if state.modules_ok is not True:
+                    return f"Run check_extension_modules successfully for {extension} before finish."
+                if state.config_ok is not True:
+                    return f"Run check_extension_config successfully for {extension} before finish."
         if self._ui_test_attempted and self._ui_test_ok is not True:
             return "The latest E2E UI test failed. Fix the problem or rollback before finish."
         return None
@@ -398,27 +464,27 @@ class HarnessAgent:
             raise ValueError("max_steps must be >= 1")
         messages = [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=f"Задача:\n{task}")]
         steps: list[AgentStep] = []
-
         for _ in range(max_steps):
             response = await self.provider.complete(messages)
             try:
                 action = self._parse_action(response.content)
             except AgentProtocolError as exc:
-                messages.append(Message(role="assistant", content=response.content))
-                messages.append(Message(role="user", content=f"PROTOCOL_ERROR: {exc}. Верни только корректный JSON action."))
+                messages.extend([
+                    Message(role="assistant", content=response.content),
+                    Message(role="user", content=f"PROTOCOL_ERROR: {exc}. Верни только корректный JSON action."),
+                ])
                 continue
-
-            tool = action["tool"]
-            args = action["args"]
+            tool, args = action["tool"], action["args"]
             if tool == "finish":
                 blocked = self._finish_block_reason()
                 if blocked:
-                    messages.append(Message(role="assistant", content=response.content))
-                    messages.append(Message(role="user", content=f"FINISH_BLOCKED: {blocked}"))
+                    messages.extend([
+                        Message(role="assistant", content=response.content),
+                        Message(role="user", content=f"FINISH_BLOCKED: {blocked}"),
+                    ])
                     continue
                 summary = str(args.get("summary", "")).strip() or "Agent finished without a summary."
                 return AgentResult(summary, steps, list(self._snapshot_ids), self._checks_ok(), self._ui_test_ok)
-
             try:
                 result = self._execute_tool(tool, args)
             except (
@@ -434,9 +500,10 @@ class HarnessAgent:
             ) as exc:
                 result = f"ERROR: {exc}"
             steps.append(AgentStep(tool=tool, args=args, result=result))
-            messages.append(Message(role="assistant", content=response.content))
-            messages.append(Message(role="user", content=f"TOOL_RESULT {tool}:\n{result}"))
-
+            messages.extend([
+                Message(role="assistant", content=response.content),
+                Message(role="user", content=f"TOOL_RESULT {tool}:\n{result}"),
+            ])
         return AgentResult(
             summary=f"Stopped after reaching max_steps={max_steps}. No finish action received.",
             steps=steps,
