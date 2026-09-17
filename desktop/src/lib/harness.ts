@@ -27,10 +27,14 @@ export async function getDoctor(): Promise<HarnessDoctor> {
   return parseJson<HarnessDoctor>(await runHarness(["doctor", "--json"]));
 }
 
-export async function runAgent(task: string, options?: { write?: boolean; check?: boolean }): Promise<AgentResult> {
+export async function runAgent(
+  task: string,
+  options?: { write?: boolean; check?: boolean; uiTest?: boolean },
+): Promise<AgentResult> {
   const args = ["agent", task, "--json"];
   if (options?.write) args.push("--write");
   if (options?.check) args.push("--check");
+  if (options?.uiTest) args.push("--ui-test");
   return parseJson<AgentResult>(await runHarness(args));
 }
 
