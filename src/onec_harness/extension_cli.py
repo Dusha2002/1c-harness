@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
 
-from onec_harness.onec.designer import Designer
+from onec_harness.onec.designer import CommandResult, Designer
 from onec_harness.settings import Settings
 
 
@@ -23,26 +24,24 @@ def _staging(settings: Settings) -> Designer:
     return Designer(settings, connection_override=settings.onec_staging_ib_connection)
 
 
-def _show(result: object) -> None:
-    command = getattr(result, "command", [])
-    console.print(" ".join(str(part) for part in command))
-    if not getattr(result, "executed", False):
+def _show(result: CommandResult) -> None:
+    console.print(" ".join(str(part) for part in result.command))
+    if not result.executed:
         console.print("[yellow]dry-run[/yellow]")
         return
-    ok = getattr(result, "ok", False)
-    console.print("[green]OK[/green]" if ok else "[red]FAILED[/red]")
-    output = getattr(result, "combined_output")()
+    console.print("[green]OK[/green]" if result.ok else "[red]FAILED[/red]")
+    output = result.combined_output()
     if output:
         console.print(output)
-    if not ok:
+    if not result.ok:
         raise typer.Exit(1)
 
 
 @app.command("dump")
 def dump_extension(
     name: str,
-    target: Path | None = typer.Option(None, "--target"),
-    execute: bool = typer.Option(False, "--execute"),
+    target: Annotated[Path | None, typer.Option("--target")] = None,
+    execute: Annotated[bool, typer.Option("--execute")] = False,
 ) -> None:
     settings = _settings()
     destination = target or settings.onec_workspace / "Extensions" / name
@@ -52,9 +51,9 @@ def dump_extension(
 @app.command("stage")
 def stage_extension(
     name: str,
-    source: Path | None = typer.Option(None, "--source"),
-    update_db: bool = typer.Option(False, "--update-db"),
-    execute: bool = typer.Option(False, "--execute"),
+    source: Annotated[Path | None, typer.Option("--source")] = None,
+    update_db: Annotated[bool, typer.Option("--update-db")] = False,
+    execute: Annotated[bool, typer.Option("--execute")] = False,
 ) -> None:
     settings = _settings()
     origin = source or settings.onec_workspace / "Extensions" / name
@@ -72,7 +71,7 @@ def stage_extension(
 @app.command("check")
 def check_extension(
     name: str,
-    execute: bool = typer.Option(False, "--execute"),
+    execute: Annotated[bool, typer.Option("--execute")] = False,
 ) -> None:
     designer = _staging(_settings())
     modules = designer.check_modules(execute=execute, extension=name)
@@ -87,6 +86,6 @@ def check_extension(
 def build_extension(
     name: str,
     output: Path,
-    execute: bool = typer.Option(False, "--execute"),
+    execute: Annotated[bool, typer.Option("--execute")] = False,
 ) -> None:
     _show(Designer(_settings()).dump_cfg(output, execute=execute, extension=name))
