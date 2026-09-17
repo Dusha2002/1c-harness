@@ -30,6 +30,7 @@ dev = [
 [project.scripts]
 onec-harness = "onec_harness.cli:app"
 onec-harness-mcp = "onec_harness.mcp_server:run_stdio_server"
+onec-harness-extension = "onec_harness.extension_cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/onec_harness"]
