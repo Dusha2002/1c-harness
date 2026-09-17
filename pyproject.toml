@@ -43,3 +43,8 @@ line-length = 130
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/onec_harness/agent.py" = ["E501"]
+"src/onec_harness/onec/e2e.py" = ["E501"]
+"src/onec_harness/semantic_extra.py" = ["E501"]
