@@ -26,15 +26,11 @@ class MCPTool:
     input_schema: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "inputSchema": self.input_schema,
-        }
+        return {"name": self.name, "description": self.description, "inputSchema": self.input_schema}
 
 
 class MCPToolRegistry:
-    """Safe tool registry shared by the stdio MCP transport and unit tests."""
+    """Safe, model-agnostic MCP tool registry for 1C Harness."""
 
     def __init__(
         self,
@@ -49,7 +45,7 @@ class MCPToolRegistry:
         self.index = ConfigurationIndex.build(self.workspace.root)
         self.semantic = SemanticToolExecutor(self.workspace)
         self.extensions = ExtensionSourceManager(self.workspace)
-        self.scenarios = ScenarioCompiler(settings)
+        self.scenarios = ScenarioCompiler(settings.onec_test_host, settings.onec_test_port)
         self.designer = designer
         if self.designer is None and settings.onec_exe and settings.onec_staging_ib_connection.strip():
             self.designer = Designer(settings, connection_override=settings.onec_staging_ib_connection)
@@ -57,64 +53,109 @@ class MCPToolRegistry:
 
     @staticmethod
     def tools() -> list[MCPTool]:
-        obj = {"type": "object", "additionalProperties": True}
+        free_object = {"type": "object", "additionalProperties": True}
         return [
-            MCPTool("metadata", "Find 1C metadata objects in the exported configuration.", {
-                "type": "object", "properties": {"query": {"type": "string"}}, "additionalProperties": False,
-            }),
-            MCPTool("symbols", "Find BSL procedures/functions.", {
-                "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"],
-                "additionalProperties": False,
-            }),
-            MCPTool("search", "Search BSL/XML source text.", {
-                "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"],
-                "additionalProperties": False,
-            }),
-            MCPTool("read", "Read one file inside ONEC_WORKSPACE.", {
-                "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"],
-                "additionalProperties": False,
-            }),
-            MCPTool("diff", "Return the current source diff excluding harness snapshots.", {
-                "type": "object", "properties": {}, "additionalProperties": False,
-            }),
-            MCPTool("semantic", "Execute an allowlisted high-level 1C metadata mutation. Requires ONEC_MCP_ALLOW_WRITES=true.", {
-                "type": "object",
-                "properties": {"tool": {"type": "string", "enum": sorted(SEMANTIC_TOOLS)}, "args": obj},
-                "required": ["tool"], "additionalProperties": False,
-            }),
-            MCPTool("extension_borrow", "Borrow a base object into a dumped extension. Requires MCP write opt-in.", {
-                "type": "object",
-                "properties": {
-                    "extension": {"type": "string"}, "kind": {"type": "string"}, "object_name": {"type": "string"},
+            MCPTool(
+                "metadata",
+                "Find 1C metadata objects in the exported configuration.",
+                {"type": "object", "properties": {"query": {"type": "string"}}, "additionalProperties": False},
+            ),
+            MCPTool(
+                "symbols",
+                "Find BSL procedures/functions.",
+                {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"], "additionalProperties": False},
+            ),
+            MCPTool(
+                "search",
+                "Search BSL/XML source text.",
+                {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"], "additionalProperties": False},
+            ),
+            MCPTool(
+                "read",
+                "Read one file inside ONEC_WORKSPACE.",
+                {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False},
+            ),
+            MCPTool("diff", "Return the current source diff.", {"type": "object", "properties": {}, "additionalProperties": False}),
+            MCPTool(
+                "semantic",
+                "Run an allowlisted high-level 1C metadata mutation. Requires ONEC_MCP_ALLOW_WRITES=true.",
+                {
+                    "type": "object",
+                    "properties": {"tool": {"type": "string", "enum": sorted(SEMANTIC_TOOLS)}, "args": free_object},
+                    "required": ["tool"],
+                    "additionalProperties": False,
                 },
-                "required": ["extension", "kind", "object_name"], "additionalProperties": False,
-            }),
-            MCPTool("extension_patch_method", "Add Before/After/Instead method interception to a borrowed extension object.", {
-                "type": "object", "additionalProperties": True,
-                "properties": {
-                    "extension": {"type": "string"}, "kind": {"type": "string"}, "object_name": {"type": "string"},
-                    "method_name": {"type": "string"}, "interceptor": {"type": "string"}, "module": {"type": "string"},
-                    "handler_name": {"type": "string"}, "parameters": {"type": "array", "items": {"type": "string"}},
-                    "body": {"type": "string"}, "context": {"type": "string"}, "function": {"type": "boolean"},
+            ),
+            MCPTool(
+                "extension_borrow",
+                "Borrow a base object into a dumped extension. Requires MCP write opt-in.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "extension": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "object_name": {"type": "string"},
+                    },
+                    "required": ["extension", "kind", "object_name"],
+                    "additionalProperties": False,
                 },
-                "required": ["extension", "kind", "object_name", "method_name"],
-            }),
-            MCPTool("runtime_query", "Run a read-only 1C query through V83.COMConnector.", {
-                "type": "object", "additionalProperties": False,
-                "properties": {
-                    "text": {"type": "string"}, "fields": {"type": "array", "items": {"type": "string"}},
-                    "parameters": obj, "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+            ),
+            MCPTool(
+                "extension_patch_method",
+                "Add Before/After/Instead interception to a borrowed extension object.",
+                {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "extension": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "object_name": {"type": "string"},
+                        "method_name": {"type": "string"},
+                        "interceptor": {"type": "string"},
+                        "module": {"type": "string"},
+                        "handler_name": {"type": "string"},
+                        "parameters": {"type": "array", "items": {"type": "string"}},
+                        "body": {"type": "string"},
+                        "context": {"type": "string"},
+                        "function": {"type": "boolean"},
+                    },
+                    "required": ["extension", "kind", "object_name", "method_name"],
                 },
-                "required": ["text", "fields"],
-            }),
-            MCPTool("stage_check", "Load source into staging and run CheckModules + CheckConfig. Can target one extension.", {
-                "type": "object", "additionalProperties": False,
-                "properties": {"extension": {"type": "string"}, "update_db": {"type": "boolean"}},
-            }),
-            MCPTool("compile_ui_test", "Compile a safe Test Manager action list to BSL.", {
-                "type": "object", "properties": {"actions": {"type": "array", "items": obj}},
-                "required": ["actions"], "additionalProperties": False,
-            }),
+            ),
+            MCPTool(
+                "runtime_query",
+                "Run a read-only 1C query through V83.COMConnector.",
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "text": {"type": "string"},
+                        "fields": {"type": "array", "items": {"type": "string"}},
+                        "parameters": free_object,
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    },
+                    "required": ["text", "fields"],
+                },
+            ),
+            MCPTool(
+                "stage_check",
+                "Load source into staging and run CheckModules + CheckConfig; optionally target an extension.",
+                {
+                    "type": "object",
+                    "properties": {"extension": {"type": "string"}, "update_db": {"type": "boolean"}},
+                    "additionalProperties": False,
+                },
+            ),
+            MCPTool(
+                "compile_ui_test",
+                "Compile a Test Manager action list to BSL.",
+                {
+                    "type": "object",
+                    "properties": {"actions": {"type": "array", "items": free_object}},
+                    "required": ["actions"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     def refresh(self) -> None:
@@ -135,6 +176,13 @@ class MCPToolRegistry:
     def _write_guard(self) -> None:
         if not self.settings.onec_mcp_allow_writes:
             raise PermissionError("MCP source writes are disabled; set ONEC_MCP_ALLOW_WRITES=true to opt in")
+
+    @staticmethod
+    def _change_payload(change: Any) -> str:
+        return json.dumps(
+            {"summary": change.summary, "snapshot_id": change.snapshot_id, "paths": change.paths},
+            ensure_ascii=False,
+        )
 
     def call(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         args = arguments or {}
@@ -159,13 +207,15 @@ class MCPToolRegistry:
                 raise ValueError("args must be an object")
             change = self.semantic.execute(tool, raw_args)
             self.refresh()
-            return json.dumps({"summary": change.summary, "snapshot_id": change.snapshot_id, "paths": change.paths}, ensure_ascii=False)
+            return self._change_payload(change)
         if name == "extension_borrow":
             self._write_guard()
             change = self.extensions.borrow_object(
-                str(args.get("extension", "")), str(args.get("kind", "")), str(args.get("object_name", ""))
+                str(args.get("extension", "")),
+                str(args.get("kind", "")),
+                str(args.get("object_name", "")),
             )
-            return json.dumps({"summary": change.summary, "snapshot_id": change.snapshot_id, "paths": change.paths}, ensure_ascii=False)
+            return self._change_payload(change)
         if name == "extension_patch_method":
             self._write_guard()
             parameters = args.get("parameters")
@@ -182,14 +232,17 @@ class MCPToolRegistry:
                 context=str(args["context"]) if args.get("context") is not None else None,
                 function=bool(args.get("function", False)),
             )
-            return json.dumps({"summary": change.summary, "snapshot_id": change.snapshot_id, "paths": change.paths}, ensure_ascii=False)
+            return self._change_payload(change)
         if name == "runtime_query":
             fields = self._strings(args.get("fields"), "fields")
             parameters = args.get("parameters") or {}
             if not isinstance(parameters, dict):
                 raise ValueError("parameters must be an object")
             rows = self.runtime.query(
-                str(args.get("text", "")), fields=fields, parameters=parameters, limit=int(args.get("limit", 200))
+                str(args.get("text", "")),
+                fields=fields,
+                parameters=parameters,
+                limit=int(args.get("limit", 200)),
             )
             return json.dumps(rows, ensure_ascii=False, default=str)
         if name == "stage_check":
@@ -213,7 +266,9 @@ class MCPToolRegistry:
                 "modules": modules.ok if modules else False,
                 "config": config.ok if config else False,
                 "log": "\n".join(
-                    item.combined_output() for item in (stage, modules, config) if item is not None and item.combined_output()
+                    item.combined_output()
+                    for item in (stage, modules, config)
+                    if item is not None and item.combined_output()
                 ),
             }
             return json.dumps(payload, ensure_ascii=False)
@@ -243,11 +298,14 @@ class MCPServer:
             params = request.get("params") or {}
             requested = params.get("protocolVersion") if isinstance(params, dict) else None
             protocol = requested if isinstance(requested, str) else MCP_PROTOCOL_VERSION
-            return self._response(request_id, {
-                "protocolVersion": protocol,
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "1c-harness", "version": "0.3.0"},
-            })
+            return self._response(
+                request_id,
+                {
+                    "protocolVersion": protocol,
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "1c-harness", "version": "0.3.0"},
+                },
+            )
         if method == "ping":
             return self._response(request_id, {})
         if method == "tools/list":
@@ -263,10 +321,10 @@ class MCPServer:
                 text = self.registry.call(params["name"], arguments)
                 return self._response(request_id, {"content": [{"type": "text", "text": text}], "isError": False})
             except Exception as exc:
-                return self._response(request_id, {
-                    "content": [{"type": "text", "text": f"ERROR: {exc}"}],
-                    "isError": True,
-                })
+                return self._response(
+                    request_id,
+                    {"content": [{"type": "text", "text": f"ERROR: {exc}"}], "isError": True},
+                )
         return self._error(request_id, -32601, f"Method not found: {method}")
 
     def serve(self, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
