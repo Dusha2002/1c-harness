@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "onec-harness"
-version = "0.2.0"
+version = "0.3.0"
 description = "Model-agnostic AI harness for safe 1C:Enterprise development and automation"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 onec-harness = "onec_harness.cli:app"
+onec-harness-mcp = "onec_harness.mcp_server:run_stdio_server"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/onec_harness"]
@@ -50,3 +51,5 @@ select = ["E", "F", "UP", "B"]
 "src/onec_harness/semantic_extra.py" = ["E501"]
 "src/onec_harness/semantic_registers.py" = ["E501"]
 "src/onec_harness/semantic_forms.py" = ["E501"]
+"src/onec_harness/extensions.py" = ["E501"]
+"src/onec_harness/mcp_server.py" = ["E501"]
