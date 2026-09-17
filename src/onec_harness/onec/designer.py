@@ -26,6 +26,10 @@ class CommandResult:
     def ok(self) -> bool:
         return self.executed and self.returncode == 0
 
+    def combined_output(self) -> str:
+        chunks = [chunk.strip() for chunk in (self.stdout, self.stderr, self.log) if chunk.strip()]
+        return "\n".join(chunks)
+
 
 class Designer:
     """Auditable wrapper around 1cv8 DESIGNER batch commands."""
@@ -38,7 +42,6 @@ class Designer:
 
     @staticmethod
     def _split_args(raw: str) -> list[str]:
-        # Windows-oriented parser: tokens may be quoted, quotes are stripped.
         tokens = re.findall(r'"[^"]*"|\S+', raw)
         return [token[1:-1] if len(token) >= 2 and token[0] == token[-1] == '"' else token for token in tokens]
 
@@ -74,8 +77,7 @@ class Designer:
                 )
             except subprocess.TimeoutExpired as exc:
                 raise DesignerError(
-                    f"1C Designer command timed out after "
-                    f"{self.settings.onec_command_timeout_seconds:g}s"
+                    f"1C Designer command timed out after {self.settings.onec_command_timeout_seconds:g}s"
                 ) from exc
             log = ""
             if log_path.exists():
@@ -107,6 +109,9 @@ class Designer:
             action.append("/UpdateDBCfg")
         return self._run(action, execute=execute)
 
+    def update_db(self, *, execute: bool = False) -> CommandResult:
+        return self._run(["/UpdateDBCfg"], execute=execute)
+
     def check_modules(
         self,
         *,
@@ -125,4 +130,24 @@ class Designer:
             action.append("-ExternalConnection")
         if extended:
             action.append("-ExtendedModulesCheck")
+        return self._run(action, execute=execute)
+
+    def check_config(
+        self,
+        *,
+        execute: bool = False,
+        check_integrity: bool = True,
+        incorrect_references: bool = True,
+        handlers: bool = True,
+        unreferenced_procedures: bool = True,
+    ) -> CommandResult:
+        action = ["/CheckConfig"]
+        if check_integrity:
+            action.append("-ConfigLogIntegrity")
+        if incorrect_references:
+            action.append("-IncorrectReferences")
+        if handlers:
+            action.append("-HandlersExistence")
+        if unreferenced_procedures:
+            action.append("-UnreferenceProcedures")
         return self._run(action, execute=execute)

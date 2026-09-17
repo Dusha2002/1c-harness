@@ -1,7 +1,9 @@
 import asyncio
+import subprocess
 from pathlib import Path
 
 from onec_harness.agent import HarnessAgent
+from onec_harness.onec.designer import CommandResult
 from onec_harness.providers.base import LLMResponse, Message
 from onec_harness.workspace import Workspace
 
@@ -16,12 +18,46 @@ class FakeProvider:
         return LLMResponse(content=next(self.responses))
 
 
-def test_agent_can_patch_when_write_enabled(tmp_path: Path) -> None:
+class FakeDesigner:
+    def __init__(self, ok: bool = True) -> None:
+        self.ok = ok
+        self.check_calls = 0
+
+    def check_modules(self, *, execute: bool = False) -> CommandResult:
+        self.check_calls += 1
+        return CommandResult(
+            command=["1cv8", "DESIGNER", "/CheckModules"],
+            returncode=0 if self.ok else 1,
+            log="modules ok" if self.ok else "syntax error",
+            executed=execute,
+        )
+
+    def check_config(self, *, execute: bool = False) -> CommandResult:
+        return CommandResult(
+            command=["1cv8", "DESIGNER", "/CheckConfig"],
+            returncode=0,
+            log="config ok",
+            executed=execute,
+        )
+
+
+def _git_init(path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+
+
+def test_agent_can_patch_and_requires_diff_before_finish(tmp_path: Path) -> None:
+    _git_init(tmp_path)
     workspace = Workspace(tmp_path)
     workspace.write_text("Module.bsl", "old")
+    subprocess.run(["git", "add", "Module.bsl"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
     provider = FakeProvider(
         [
             '{"tool":"patch","args":{"path":"Module.bsl","old":"old","new":"new"}}',
+            '{"tool":"finish","args":{"summary":"too early"}}',
+            '{"tool":"diff","args":{}}',
             '{"tool":"finish","args":{"summary":"done"}}',
         ]
     )
@@ -31,6 +67,8 @@ def test_agent_can_patch_when_write_enabled(tmp_path: Path) -> None:
 
     assert result.summary == "done"
     assert workspace.read_text("Module.bsl") == "new"
+    assert result.snapshots
+    assert [step.tool for step in result.steps] == ["patch", "diff"]
 
 
 def test_agent_refuses_patch_in_read_only_mode(tmp_path: Path) -> None:
@@ -49,3 +87,34 @@ def test_agent_refuses_patch_in_read_only_mode(tmp_path: Path) -> None:
     assert result.summary == "blocked"
     assert workspace.read_text("Module.bsl") == "old"
     assert "writes are disabled" in result.steps[0].result
+
+
+def test_agent_requires_successful_1c_check_when_enabled(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Module.bsl", "old")
+    subprocess.run(["git", "add", "Module.bsl"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    provider = FakeProvider(
+        [
+            '{"tool":"patch","args":{"path":"Module.bsl","old":"old","new":"new"}}',
+            '{"tool":"diff","args":{}}',
+            '{"tool":"finish","args":{"summary":"too early"}}',
+            '{"tool":"check_modules","args":{}}',
+            '{"tool":"finish","args":{"summary":"checked"}}',
+        ]
+    )
+    designer = FakeDesigner(ok=True)
+    agent = HarnessAgent(
+        provider,
+        workspace,
+        designer=designer,  # type: ignore[arg-type]
+        allow_writes=True,
+        execute_checks=True,
+    )
+
+    result = asyncio.run(agent.run("change it"))
+
+    assert result.summary == "checked"
+    assert result.checks_ok is True
+    assert designer.check_calls == 1

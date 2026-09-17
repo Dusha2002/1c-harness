@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from onec_harness.agent import HarnessAgent
+from onec_harness.metadata import ConfigurationIndex
 from onec_harness.onec.designer import CommandResult, Designer, DesignerError
 from onec_harness.providers.base import Message, ProviderError
 from onec_harness.providers.factory import create_provider
 from onec_harness.settings import Settings
+from onec_harness.snapshots import SnapshotError, SnapshotStore
 from onec_harness.workspace import Workspace, WorkspaceError
 
 app = typer.Typer(no_args_is_help=True, help="AI harness for 1C:Enterprise")
@@ -46,25 +50,50 @@ def _print_result(result: CommandResult) -> None:
         console.print(result.log.rstrip())
 
 
+def _agent_payload(result: Any) -> dict[str, Any]:
+    return {
+        "summary": result.summary,
+        "snapshots": result.snapshots,
+        "checks_ok": result.checks_ok,
+        "steps": [
+            {"tool": step.tool, "args": step.args, "result": step.result}
+            for step in result.steps
+        ],
+    }
+
+
 @app.command()
-def doctor() -> None:
+def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
     """Show wiring status without exposing secrets."""
     settings = _settings()
-    table = Table(title="1C Harness doctor")
-    table.add_column("Setting")
-    table.add_column("Value")
-    table.add_row("LLM provider", settings.llm_provider)
-    table.add_row("LLM model", settings.llm_model)
     if settings.provider_name == "gigachat":
         credentials_ok = bool(settings.gigachat_credentials)
     elif settings.provider_name == "anthropic":
         credentials_ok = bool(settings.anthropic_api_key)
     else:
         credentials_ok = bool(settings.llm_api_key)
+
+    payload = {
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.llm_model,
+        "llm_credentials": credentials_ok,
+        "onec_exe": str(settings.onec_exe) if settings.onec_exe else None,
+        "onec_connection": bool(settings.onec_ib_connection),
+        "workspace": str(settings.onec_workspace.expanduser().resolve()),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    table = Table(title="1C Harness doctor")
+    table.add_column("Setting")
+    table.add_column("Value")
+    table.add_row("LLM provider", settings.llm_provider)
+    table.add_row("LLM model", settings.llm_model)
     table.add_row("LLM credentials", "configured" if credentials_ok else "missing")
     table.add_row("1C executable", str(settings.onec_exe or "not configured"))
     table.add_row("1C connection", "configured" if settings.onec_ib_connection else "missing")
-    table.add_row("Workspace", str(settings.onec_workspace.expanduser().resolve()))
+    table.add_row("Workspace", payload["workspace"])
     console.print(table)
 
 
@@ -99,23 +128,39 @@ def ask(prompt: str) -> None:
 @app.command()
 def agent(
     task: str,
-    write: bool = typer.Option(False, "--write", help="Allow the model to patch workspace files"),
-    max_steps: int = typer.Option(12, "--max-steps", min=1, max=50),
+    write: bool = typer.Option(False, "--write", help="Allow the model to stage patches in workspace files"),
+    check: bool = typer.Option(False, "--check", help="Allow the agent to run non-destructive 1C validation"),
+    max_steps: int = typer.Option(16, "--max-steps", min=1, max=60),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable output for desktop/MCP clients"),
 ) -> None:
-    """Run the model through the allowlisted 1C source-code tool loop."""
+    """Run the selected model through the allowlisted 1C engineering tool loop."""
     settings = _settings()
     workspace = _workspace(settings)
 
     async def run():
         provider = create_provider(settings)
-        harness = HarnessAgent(provider, workspace, allow_writes=write)
+        designer = Designer(settings) if check else None
+        harness = HarnessAgent(
+            provider,
+            workspace,
+            designer=designer,
+            allow_writes=write,
+            execute_checks=check,
+        )
         return await harness.run(task, max_steps=max_steps)
 
     try:
         result = asyncio.run(run())
-    except (ProviderError, WorkspaceError) as exc:
-        console.print(f"[red]{exc}[/red]")
+    except (ProviderError, WorkspaceError, DesignerError, SnapshotError) as exc:
+        if json_output:
+            typer.echo(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        else:
+            console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(_agent_payload(result), ensure_ascii=False))
+        return
 
     table = Table(title="Agent steps")
     table.add_column("#", justify="right")
@@ -130,8 +175,24 @@ def agent(
         console.print(table)
     console.print("[bold]Summary:[/bold]")
     console.print(result.summary)
+    if result.snapshots:
+        console.print(f"[dim]Snapshots: {', '.join(result.snapshots)}[/dim]")
     if not write:
         console.print("[yellow]Read-only mode: patches were not permitted.[/yellow]")
+
+
+@app.command("metadata")
+def metadata_command(query: str = typer.Argument(""), limit: int = 100) -> None:
+    """List indexed 1C metadata objects from the exported configuration."""
+    index = ConfigurationIndex.build(_workspace(_settings()).root)
+    console.print(index.describe_objects(query=query, limit=limit))
+
+
+@app.command("symbols")
+def symbols_command(query: str, limit: int = 100) -> None:
+    """Find BSL procedures/functions by symbol name."""
+    index = ConfigurationIndex.build(_workspace(_settings()).root)
+    console.print(index.describe_symbols(query=query, limit=limit))
 
 
 @app.command("read")
@@ -176,6 +237,20 @@ def rollback(path: str, yes: bool = typer.Option(False, "--yes")) -> None:
         raise typer.Exit(1) from exc
 
 
+@app.command("restore-snapshot")
+def restore_snapshot(snapshot_id: str, yes: bool = typer.Option(False, "--yes")) -> None:
+    """Restore files captured before an agent patch."""
+    if not yes:
+        console.print("[red]Snapshot restore requires --yes[/red]")
+        raise typer.Exit(2)
+    try:
+        info = SnapshotStore(_workspace(_settings())).restore(snapshot_id)
+        console.print(f"Restored {snapshot_id}: {', '.join(info.paths)}")
+    except (SnapshotError, WorkspaceError, OSError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
 @app.command("dump-config")
 def dump_config(execute: bool = typer.Option(False, "--execute")) -> None:
     """Dump the 1C configuration to the workspace; dry-run by default."""
@@ -195,6 +270,19 @@ def check_modules(execute: bool = typer.Option(False, "--execute")) -> None:
     """Run /CheckModules; dry-run by default."""
     try:
         result = Designer(_settings()).check_modules(execute=execute)
+        _print_result(result)
+        if result.executed and result.returncode != 0:
+            raise typer.Exit(result.returncode or 1)
+    except DesignerError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@app.command("check-config")
+def check_config(execute: bool = typer.Option(False, "--execute")) -> None:
+    """Run structural /CheckConfig validation; dry-run by default."""
+    try:
+        result = Designer(_settings()).check_config(execute=execute)
         _print_result(result)
         if result.executed and result.returncode != 0:
             raise typer.Exit(result.returncode or 1)

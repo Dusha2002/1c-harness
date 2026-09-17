@@ -1,50 +1,66 @@
 # 1C Harness
 
-AI harness for safe, model-agnostic development and automation of 1C:Enterprise.
+Model-agnostic AI harness for safe development and automation of **1C:Enterprise**.
 
-The project is designed as a bridge between an LLM and 1C. The model should not edit random XML or get unrestricted access to a production infobase. Instead, the harness exposes a small set of explicit tools for reading exported configuration sources, changing modules, validating changes through Designer, inspecting diffs and rolling back.
+The long-term goal is a local **“Codex / Claude Code for 1C”**: an agent that understands 1C metadata and BSL, edits configuration sources, validates changes through Designer, can later exercise the application through Test Client/Test Manager and inspect runtime data through COMConnector.
 
-## Current MVP direction
+## Current architecture
 
-The first milestone implements the closed loop:
+```text
+GigaChat / OpenAI / DeepSeek / Anthropic / compatible API
+                         |
+                    HarnessAgent
+                         |
+          +--------------+--------------+
+          |              |              |
+   metadata + BSL     Workspace      1C Designer
+       index           sandbox          CLI
+          |              |              |
+   objects/symbols   patch/diff      dump/load
+                    snapshots        checks
+```
 
-`read -> plan -> patch -> check -> diff -> rollback/apply`
+The agent uses an allowlisted JSON tool protocol instead of unrestricted shell access.
 
-Model providers are isolated behind one interface. GigaChat 3 Ultra is the default provider, while OpenAI-compatible APIs, DeepSeek and Anthropic are supported through adapters/configuration without coupling the agent to one vendor.
+## What works now
 
-## Planned 1C capabilities
-
-- dump configuration to files;
-- search and read BSL/XML sources;
-- safely patch files inside a workspace;
-- load configuration from files;
-- run `/CheckModules` and later `/CheckConfig`;
-- update DB configuration only with an explicit write/apply action;
-- show git diff and restore changes;
-- later: Test Client/Test Manager, COMConnector and high-level metadata operations.
+- provider abstraction for GigaChat 3 Ultra, OpenAI, DeepSeek, Anthropic and generic OpenAI-compatible APIs;
+- safe source workspace with path-escape protection;
+- BSL/XML text search and reading;
+- metadata index for common 1C object kinds (catalogs, documents, registers, common modules, reports, processors, etc.);
+- BSL procedure/function symbol index;
+- exact one-match patches;
+- automatic persistent snapshot before each agent patch;
+- git diff and explicit rollback;
+- `DumpConfigToFiles` / `LoadConfigFromFiles`;
+- `/CheckModules` and `/CheckConfig` wrappers;
+- agent completion gates: after a patch it must inspect diff, and with `--check` it must obtain a successful 1C validation before finishing;
+- JSON CLI output for desktop/MCP integrations;
+- Tauri + React desktop UI scaffold with Monaco diff review.
 
 ## Safety model
 
 - production-changing operations are never implicit;
-- file access is sandboxed to the configured workspace;
-- commands have timeouts and capture logs;
-- credentials are read from environment variables only;
-- `.env` is ignored by git;
-- destructive/apply operations will require an explicit flag;
-- source changes are expected to be version-controlled.
+- the model never gets arbitrary shell access;
+- file access is sandboxed to `ONEC_WORKSPACE`;
+- credentials come only from local environment variables / `.env`;
+- every patch gets a snapshot id before the file is changed;
+- local source review is separate from loading changes into 1C;
+- updating DB configuration requires an explicit command and confirmation;
+- Designer commands have timeouts and captured logs.
 
-## Quick start
+## Python quick start
 
 Requires Python 3.11+ and a local 1C installation for Designer commands.
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
 copy .env.example .env
 ```
 
-Set at minimum:
+Example configuration:
 
 ```env
 LLM_PROVIDER=gigachat
@@ -52,51 +68,106 @@ LLM_MODEL=GigaChat-3-Ultra
 GIGACHAT_CREDENTIALS=...
 GIGACHAT_SCOPE=GIGACHAT_API_PERS
 ONEC_EXE=C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe
-ONEC_IB_CONNECTION=/F C:\path\to\infobase
+ONEC_IB_CONNECTION=/F "C:\path\to\infobase"
 ONEC_WORKSPACE=C:\path\to\exported-config
 ```
 
-Then verify configuration and provider wiring:
+Useful commands:
 
-```bash
+```powershell
 onec-harness doctor
-onec-harness ask "Кратко опиши роль этого harness"
-```
-
-Designer commands are exposed separately so they remain auditable:
-
-```bash
-onec-harness dump-config
-onec-harness check-modules
+onec-harness dump-config --execute
+onec-harness metadata Заказ
+onec-harness symbols Проведение
+onec-harness agent "Найди причину ошибки проведения" 
+onec-harness agent "Исправь проверку остатков" --write --check
 onec-harness diff
+onec-harness check-modules --execute
+onec-harness check-config --execute
 ```
 
-## Providers
+Machine-readable integration:
+
+```powershell
+onec-harness doctor --json
+onec-harness agent "Проверь модуль" --json
+```
+
+## Review-first workflow
+
+The intended engineering cycle is:
+
+```text
+READ / METADATA
+       |
+      PLAN
+       |
+    SNAPSHOT
+       |
+      PATCH
+       |
+      DIFF
+       |
+  CheckModules
+       |
+ error? ----> inspect 1C log -> fix -> check again
+       |
+  CheckConfig
+       |
+ user reviews staged change
+       |
+ accept / rollback
+       |
+ load into test configuration
+```
+
+The agent already enforces the `patch -> diff -> check` part when checks are enabled. Loading into a test infobase and automated functional testing are intentionally still separate.
+
+## Desktop application
+
+The `desktop/` folder contains a Tauri 2 + React/TypeScript application inspired by an IDE/code-agent review workflow:
+
+- left pane: user chat + visible agent steps;
+- right pane: Monaco BSL diff review;
+- `Принять / Отклонить` review flow;
+- 1C connection status;
+- local Tauri bridge to `onec-harness` CLI;
+- demo data when no configured 1C installation is available.
+
+Run it with:
+
+```powershell
+cd desktop
+npm install
+npm run tauri dev
+```
+
+See `desktop/README.md` for details.
+
+## Provider configuration
 
 ### GigaChat
 
-Default model: `GigaChat-3-Ultra`. Authentication uses the GigaChat authorization key to obtain a short-lived access token and then calls `https://api.giga.chat/v1/chat/completions`.
+Default model: `GigaChat-3-Ultra`. The provider exchanges the authorization credentials for a short-lived access token and then calls GigaChat chat completions.
 
 ### OpenAI / DeepSeek / compatible APIs
 
-Use the generic OpenAI-compatible adapter by setting a base URL, API key and model name.
+Use the generic OpenAI-compatible provider with the desired API base URL, API key and model name.
 
 ### Anthropic
 
-Uses a dedicated Messages API adapter because Anthropic is not OpenAI-compatible.
+Anthropic uses a dedicated Messages API adapter.
 
-## Roadmap
+## Roadmap to v1
 
-1. Provider abstraction + GigaChat Ultra.
-2. Safe filesystem workspace + git diff/rollback.
-3. 1C Designer adapter: dump/load/check.
-4. Agent action loop with allowlisted tools.
-5. BSL-aware symbol/module index.
-6. 1C Test Client/Test Manager adapter.
-7. COMConnector runtime adapter.
-8. High-level semantic tools such as `create_catalog()` and `create_document()`.
-9. MCP server so Codex/Claude/ChatGPT-compatible agents can use the same 1C tools.
+1. **Closed engineering loop** — richer 1C check diagnostics, staged patch sessions and test-infobase apply workflow.
+2. **Metadata semantic API** — `get_document`, `get_catalog`, `read_module`, dependency/reference navigation.
+3. **High-level mutations** — `create_catalog`, `create_document`, `add_attribute`, `create_register`, `create_extension` without exposing raw XML to the model.
+4. **COMConnector runtime adapter** — queries, object retrieval, server function calls and register inspection.
+5. **Test Client / Test Manager** — programmatic forms, commands, fields and end-to-end verification.
+6. **MCP server** — expose the same safe tools to Codex, Claude, ChatGPT-compatible clients and other agents.
+7. **Desktop production flow** — streaming steps, real patch tabs, accept/reject snapshots, test-base apply and test results.
 
 ## Status
 
-Early prototype. Do not point it at a production infobase yet.
+The project is an active prototype. Use a copy/test infobase; do not point autonomous write/apply flows at production yet.
