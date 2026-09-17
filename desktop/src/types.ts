@@ -11,6 +11,7 @@ export interface AgentResult {
   summary: string;
   snapshots: string[];
   checks_ok: boolean | null;
+  ui_test_ok: boolean | null;
   steps: Array<{
     tool: string;
     args: Record<string, unknown>;
@@ -38,6 +39,7 @@ export interface HarnessDoctor {
   runtime_writes: boolean;
   test_client_connection: boolean;
   test_manager_connection: boolean;
+  e2e_ui_testing: boolean;
   test_port: number;
   workspace: string;
 }
