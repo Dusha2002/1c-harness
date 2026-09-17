@@ -3,6 +3,7 @@ from pathlib import Path
 from onec_harness.metadata import ConfigurationIndex
 from onec_harness.semantic import MetadataEditor
 from onec_harness.semantic_extra import ExtendedMetadataEditor
+from onec_harness.semantic_registers import RegisterMetadataEditor
 from onec_harness.workspace import Workspace
 
 
@@ -117,3 +118,75 @@ def test_add_typed_tabular_section_to_document(tmp_path: Path) -> None:
     assert "<Name>Количество</Name>" in text
     assert "<v8:FractionDigits>3</v8:FractionDigits>" in text
     assert change.snapshot_id
+
+
+def test_create_information_register_with_typed_fields(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = RegisterMetadataEditor(workspace)
+
+    change = editor.create_information_register(
+        "Цены",
+        dimensions=[
+            {
+                "name": "Товар",
+                "value_type": "CatalogRef.Товары",
+                "main_filter": True,
+                "deny_incomplete_values": True,
+            }
+        ],
+        resources=[{"name": "Цена", "value_type": "number", "digits": 15, "fraction_digits": 2}],
+        periodicity="Day",
+    )
+
+    text = workspace.read_text("InformationRegisters/Цены.xml")
+    assert "InformationRegisterRecord.Цены" in text
+    assert "InformationRegisterRecordManager.Цены" in text
+    assert "<InformationRegisterPeriodicity>Day</InformationRegisterPeriodicity>" in text
+    assert "<WriteMode>Independent</WriteMode>" in text
+    assert "<Dimension " in text and "<Name>Товар</Name>" in text
+    assert "<MainFilter>true</MainFilter>" in text
+    assert "<DenyIncompleteValues>true</DenyIncompleteValues>" in text
+    assert "<Resource " in text and "<Name>Цена</Name>" in text
+    assert "<v8:FractionDigits>2</v8:FractionDigits>" in text
+    assert "<InformationRegister>Цены</InformationRegister>" in workspace.read_text("Configuration.xml")
+    assert change.snapshot_id
+    index = ConfigurationIndex.build(tmp_path)
+    assert any(item.kind == "information_register" and item.name == "Цены" for item in index.objects)
+
+
+def test_create_balance_accumulation_register(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = RegisterMetadataEditor(workspace)
+
+    change = editor.create_accumulation_register(
+        "ОстаткиТоваров",
+        register_type="Balances",
+        dimensions=[{"name": "Товар", "value_type": "CatalogRef.Товары"}],
+        resources=[{"name": "Количество", "value_type": "number", "digits": 15, "fraction_digits": 3}],
+    )
+
+    text = workspace.read_text("AccumulationRegisters/ОстаткиТоваров.xml")
+    assert "AccumulationRegisterRecord.ОстаткиТоваров" in text
+    assert "AccumulationRegisterRecordKey.ОстаткиТоваров" in text
+    assert "<RegisterType>Balance</RegisterType>" in text
+    assert '<xr:StandardAttribute name="RecordType">' in text
+    assert "<Name>Количество</Name>" in text
+    assert "<v8:FractionDigits>3</v8:FractionDigits>" in text
+    assert "<AccumulationRegister>ОстаткиТоваров</AccumulationRegister>" in workspace.read_text("Configuration.xml")
+    assert change.snapshot_id
+    index = ConfigurationIndex.build(tmp_path)
+    assert any(item.kind == "accumulation_register" and item.name == "ОстаткиТоваров" for item in index.objects)
+
+
+def test_create_turnovers_accumulation_register_omits_record_type_standard_attribute(tmp_path: Path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text("Configuration.xml", CONFIG)
+    editor = RegisterMetadataEditor(workspace)
+
+    editor.create_accumulation_register("ПродажиОбороты", register_type="Turnovers")
+
+    text = workspace.read_text("AccumulationRegisters/ПродажиОбороты.xml")
+    assert "<RegisterType>Turnovers</RegisterType>" in text
+    assert '<xr:StandardAttribute name="RecordType">' not in text
