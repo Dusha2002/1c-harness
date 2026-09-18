@@ -276,3 +276,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .settings-note { display: block; font-size: 10px; color: #97a099; margin-top: 15px; }
 .connection-report { margin-top: 16px; font-size: 12px; line-height: 1.7; color: #667e6f; }
+
+
+.discovery-panel {
+  margin: 18px 0 6px;
+  padding: 16px;
+  border: 1px solid #dce9e2;
+  border-radius: 12px;
+  background: #f7fbf9;
+}
+.discovery-title {
+  margin-bottom: 10px;
+  color: #3f6d59;
+  font-size: 12px;
+  font-weight: 650;
+}
+.compact-grid { margin: 0; gap: 12px; }
+.discovery-panel small {
+  display: block;
+  margin-top: 8px;
+  color: #8a958f;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.suggested-path {
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #e2e8e4;
+  border-radius: 7px;
+  background: #fff;
+  color: #647269;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
