@@ -204,7 +204,7 @@ class SkillStore:
             raise ValueError("Skill file must be Markdown or text (.md/.txt)")
         if path.stat().st_size > MAX_SKILL_BYTES:
             raise ValueError(f"Skill file is too large (max {MAX_SKILL_BYTES // 1024} KB)")
-        text = path.read_text(encoding="utf-8-sig")
+        text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
         meta, body = _frontmatter(text)
         name = _validate_name(meta.get("name") or path.stem)
         description = (meta.get("description") or _infer_description(body, f"User skill {name}"))[:240]
@@ -232,7 +232,7 @@ class SkillStore:
     def _read_user(self, path: Path) -> Skill:
         if path.stat().st_size > MAX_SKILL_BYTES:
             raise ValueError("Skill file is too large")
-        text = path.read_text(encoding="utf-8-sig")
+        text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
         meta, body = _frontmatter(text)
         name = _validate_name(meta.get("name") or path.stem)
         description = (meta.get("description") or _infer_description(body, f"User skill {name}"))[:240]
