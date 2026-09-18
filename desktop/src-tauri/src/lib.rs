@@ -57,6 +57,7 @@ fn pick_path(kind: String) -> Option<String> {
     let selected = match kind.as_str() {
         "exe" => dialog.add_filter("1С:Предприятие", &["exe"]).pick_file(),
         "folder" => dialog.pick_folder(),
+        "skill" => dialog.add_filter("Harness Skill", &["md", "txt"]).pick_file(),
         _ => None,
     };
     selected.map(|path| path.to_string_lossy().into_owned())
