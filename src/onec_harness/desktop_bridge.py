@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import shutil
 import sys
 import uuid
 from dataclasses import asdict
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from onec_harness.agent import HarnessAgent
-from onec_harness.connections import connection_identity, require_test_connection
+from onec_harness.connections import connection_identity, file_connection_path, require_test_connection
 from onec_harness.desktop_config import config_root, load_settings, public_config, write_config
 from onec_harness.discovery import discover_infobases, discover_onec_executables
 from onec_harness.onec.com import ComConnector
@@ -75,6 +76,33 @@ class DesktopService:
             "infobases": infobases,
             "suggested_workspace": suggested_workspace,
         }
+
+    def prepare_staging(self, target: str | None = None) -> dict:
+        source_value = file_connection_path(self.settings.onec_ib_connection)
+        if not source_value:
+            raise ValueError(
+                'Автоматическая staging-копия доступна для файловых баз /F. '
+                'Для серверной базы выберите отдельную staging-базу.'
+            )
+        source = Path(source_value)
+        if not source.is_dir():
+            raise ValueError(f'Папка основной файловой базы не найдена: {source}')
+        target_path = Path(target).expanduser() if target else source.with_name(source.name + '-harness-staging')
+        connection = f'/F "{target_path}"'
+        if target_path.exists():
+            configured = self.settings.onec_staging_ib_connection.strip()
+            if configured and connection_identity(configured) == connection_identity(connection):
+                return {'connection': connection, 'path': str(target_path), 'existing': True}
+            raise ValueError(f'Папка staging уже существует: {target_path}. Выберите другую папку.')
+        try:
+            shutil.copytree(source, target_path)
+        except OSError as exc:
+            if target_path.exists():
+                shutil.rmtree(target_path, ignore_errors=True)
+            raise ValueError(f'Не удалось создать staging-копию: {exc}') from exc
+        require_test_connection(self.settings.onec_ib_connection, connection)
+        write_config({'onec_staging_ib_connection': connection})
+        return {'connection': connection, 'path': str(target_path)}
 
     def doctor(self) -> dict:
         s = self.settings
@@ -245,6 +273,8 @@ class DesktopService:
             return self.doctor()
         if op == 'discover':
             return self.discover()
+        if op == 'prepare_staging':
+            return self.prepare_staging(request.get('target'))
         if op == 'session':
             return self.review()
         if op == 'test_model':
@@ -264,6 +294,7 @@ class DesktopService:
             result = Designer(self.settings).dump_config(self.workspace.root, execute=True)
             if not result.ok:
                 raise ValueError(result.combined_output() or 'Выгрузка 1С завершилась ошибкой')
+            self.workspace.capture_baseline()
             return self.doctor()
         raise ValueError('Unknown desktop operation')
 

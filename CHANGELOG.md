@@ -1,5 +1,9 @@
 # v0.4 development preview
 
+- Added guided first-run setup with installed-platform and registered-infobase discovery.
+- Added automatic staging copy creation for file infobases and native Windows path pickers.
+- Added persistent Git-free source baselines after configuration export.
+
 - Replaced demo UI with persistent settings, real tool progress, cancellation and full-file review.
 - Added durable failed/interrupted-run recovery, byte-exact reject and external-edit conflict detection.
 - Added explicit checked-source deployment with a required .dt backup and separate confirmation.

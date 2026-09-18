@@ -22,3 +22,14 @@ def require_test_connection(primary: str, test: str) -> None:
     target = connection_identity(test)
     if primary.strip() and connection_identity(primary) == target:
         raise ValueError('Test/staging infobase must differ from the primary infobase')
+
+
+def file_connection_path(raw: str) -> str | None:
+    """Return the original file-infobase path for a validated /F connection."""
+    match = re.fullmatch(r'\s*/([FS])\s*(?:"([^"\r\n]+)"|([^\s"]+))\s*', raw, re.IGNORECASE)
+    if not match or match[1].upper() != 'F':
+        return None
+    target = match[2] or match[3]
+    if not ntpath.isabs(target):
+        raise ValueError('Infobase file path must be absolute')
+    return ntpath.normpath(target)

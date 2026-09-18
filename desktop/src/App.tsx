@@ -2,6 +2,7 @@ import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
 import { Bot, Check, Code2, Database, FileCode2, RefreshCw, Send, Settings, Square, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { request, type Progress } from './lib/harness';
+import SetupWizard from './SetupWizard';
 import type { DesktopSettings, DiscoveryResult, HarnessDoctor, Session } from './types';
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
@@ -53,6 +54,7 @@ export default function App() {
   const [events, setEvents] = useState<Progress[]>([]);
   const [currentTool, setCurrentTool] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
   const [form, setForm] = useState<Record<string, string | null>>({});
@@ -70,7 +72,7 @@ export default function App() {
   }
   useEffect(() => {
     refresh()
-      .then(status => { if (!status.can_run) void openSettings(); })
+      .then(status => { if (!status.can_run) setSetupOpen(true); })
       .catch(error => setNotice(`Не удалось связаться с приложением: ${String(error)}`));
   }, []);
 
@@ -146,6 +148,10 @@ export default function App() {
   }
 
   return <div className="app-shell">
+    {setupOpen && <SetupWizard
+      onComplete={status => { setDoctor(status); setSetupOpen(false); setNotice('Настройка завершена. Harness готов к работе.'); }}
+      onAdvanced={() => { setSetupOpen(false); void openSettings(); }}
+    />}
     <header className="topbar">
       <div className="brand-block"><div className="brand-mark"><Code2 size={17}/></div><span className="brand-name">1C Harness</span></div>
       <div className="session-title">{doctor?.llm_model ?? 'Новая сессия'}</div>

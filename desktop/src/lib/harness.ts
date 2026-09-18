@@ -5,3 +5,7 @@ export async function request<T>(op: string, args: Record<string, unknown> = {},
   onEvent.onmessage = event => progress?.(event);
   return invoke<T>('desktop_request', { request: { op, ...args }, onEvent });
 }
+
+export async function pickPath(kind: 'exe' | 'folder'): Promise<string | null> {
+  return invoke<string | null>('pick_path', { kind });
+}

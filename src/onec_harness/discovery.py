@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from collections.abc import Iterable
 
+from onec_harness.connections import file_connection_path
+
 
 def discover_onec_executables() -> list[str]:
     """Return installed 1cv8.exe paths, newest-looking versions first."""
@@ -63,7 +65,7 @@ def connection_from_registration(connect: str) -> str | None:
     return None
 
 
-def parse_ibases(text: str) -> list[dict[str, str]]:
+def parse_ibases(text: str) -> list[dict[str, str | None]]:
     """Parse 1CEStart ibases.v8i without executing any 1C code."""
     current_name = ""
     result: list[dict[str, str]] = []
@@ -79,7 +81,11 @@ def parse_ibases(text: str) -> list[dict[str, str]]:
             continue
         connection = connection_from_registration(value.strip())
         if connection:
-            result.append({"name": current_name or connection, "connection": connection})
+            result.append({
+                "name": current_name or connection,
+                "connection": connection,
+                "file_path": file_connection_path(connection),
+            })
     return result
 
 
@@ -94,8 +100,8 @@ def _registration_files() -> Iterable[Path]:
     )
 
 
-def discover_infobases() -> list[dict[str, str]]:
-    found: list[dict[str, str]] = []
+def discover_infobases() -> list[dict[str, str | None]]:
+    found: list[dict[str, str | None]] = []
     seen: set[str] = set()
     for path in _registration_files():
         if not path.is_file():
