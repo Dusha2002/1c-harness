@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 from collections.abc import Iterable
 
@@ -12,16 +13,26 @@ from onec_harness.connections import file_connection_path
 def discover_onec_executables() -> list[str]:
     """Return installed 1cv8.exe paths, newest-looking versions first."""
     roots: list[Path] = []
-    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+    for variable in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
         value = os.environ.get(variable)
         if value:
             roots.append(Path(value) / "1cv8")
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        roots.append(Path(local_appdata) / "Programs" / "1cv8")
 
     found: list[Path] = []
+    on_path = shutil.which("1cv8.exe") or shutil.which("1cv8")
+    if on_path:
+        found.append(Path(on_path).resolve())
     for root in roots:
         if not root.is_dir():
             continue
-        for version in root.iterdir():
+        try:
+            versions = list(root.iterdir())
+        except OSError:
+            continue
+        for version in versions:
             candidate = version / "bin" / "1cv8.exe"
             if candidate.is_file():
                 found.append(candidate.resolve())
