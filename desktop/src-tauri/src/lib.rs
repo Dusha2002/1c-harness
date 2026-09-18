@@ -51,10 +51,21 @@ async fn desktop_request(request: Value, on_event: Channel<Value>) -> Result<Val
     }).await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn pick_path(kind: String) -> Option<String> {
+    let dialog = rfd::FileDialog::new();
+    let selected = match kind.as_str() {
+        "exe" => dialog.add_filter("1С:Предприятие", &["exe"]).pick_file(),
+        "folder" => dialog.pick_folder(),
+        _ => None,
+    };
+    selected.map(|path| path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![desktop_request])
+        .invoke_handler(tauri::generate_handler![desktop_request, pick_path])
         .run(tauri::generate_context!())
         .expect("error while running 1C Harness desktop");
 }
