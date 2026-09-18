@@ -199,8 +199,8 @@ def test_parse_registered_infobases_supports_file_and_server() -> None:
         '[ERP]\nConnect=Srvr="srv01";Ref="ERP";\n'
     )
     assert entries == [
-        {'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"'},
-        {'name': 'ERP', 'connection': '/S "srv01\\ERP"'},
+        {'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"', 'file_path': 'C:\\Bases\\Demo'},
+        {'name': 'ERP', 'connection': '/S "srv01\\ERP"', 'file_path': None},
     ]
 
 
@@ -220,7 +220,7 @@ def test_discovery_finds_platform_and_registered_base(tmp_path, monkeypatch) -> 
     monkeypatch.setenv('APPDATA', str(appdata))
 
     assert discover_onec_executables() == [str(exe.resolve())]
-    assert discover_infobases() == [{'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"'}]
+    assert discover_infobases() == [{'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"', 'file_path': 'C:\\Bases\\Demo'}]
 
 
 def test_desktop_service_exposes_discovery(tmp_path, monkeypatch) -> None:
@@ -243,3 +243,23 @@ def test_desktop_service_exposes_discovery(tmp_path, monkeypatch) -> None:
     assert result['executables'] == [str(exe.resolve())]
     assert result['infobases'][0]['name'] == 'Demo'
     assert result['suggested_workspace'].endswith('workspace')
+
+
+def test_workspace_persistent_baseline_supports_git_free_restart(tmp_path) -> None:
+    workspace = Workspace(tmp_path)
+    workspace.write_text('Module.bsl', 'before\n')
+    workspace.capture_baseline()
+
+    restarted = Workspace(tmp_path)
+    restarted.write_text('Module.bsl', 'after\n')
+
+    assert restarted.changed_paths() == ['Module.bsl']
+    assert '-before' in restarted.git_diff()
+    assert '+after' in restarted.git_diff()
+    restarted.git_restore('Module.bsl', confirmed=True)
+    assert restarted.read_text('Module.bsl') == 'before\n'
+
+
+def test_file_infobase_discovery_exposes_copy_source() -> None:
+    entries = parse_ibases('[Demo]\nConnect=File="C:\\Bases\\Demo";\n')
+    assert entries[0]['file_path'] == 'C:\\Bases\\Demo'
