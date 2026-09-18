@@ -14,6 +14,7 @@ from typing import Any
 from onec_harness.agent import HarnessAgent
 from onec_harness.connections import connection_identity, require_test_connection
 from onec_harness.desktop_config import config_root, load_settings, public_config, write_config
+from onec_harness.discovery import discover_infobases, discover_onec_executables
 from onec_harness.onec.com import ComConnector
 from onec_harness.onec.designer import Designer
 from onec_harness.onec.e2e import TestManagerRunner
@@ -64,6 +65,16 @@ class DesktopService:
                   'created': p not in before, 'deleted': p not in after}
                  for p in sorted(before.keys() | after.keys()) if before.get(p) != after.get(p)]
         return {k: v for k, v in session.items() if k not in {'before', 'after'}} | {'files': files}
+
+    def discover(self) -> dict:
+        executables = discover_onec_executables()
+        infobases = discover_infobases()
+        suggested_workspace = str((config_root() / "workspace").resolve())
+        return {
+            "executables": executables,
+            "infobases": infobases,
+            "suggested_workspace": suggested_workspace,
+        }
 
     def doctor(self) -> dict:
         s = self.settings
@@ -232,6 +243,8 @@ class DesktopService:
             return write_config(request['values'])
         if op == 'doctor':
             return self.doctor()
+        if op == 'discover':
+            return self.discover()
         if op == 'session':
             return self.review()
         if op == 'test_model':
