@@ -263,3 +263,27 @@ def test_workspace_persistent_baseline_supports_git_free_restart(tmp_path) -> No
 def test_file_infobase_discovery_exposes_copy_source() -> None:
     entries = parse_ibases('[Demo]\nConnect=File="C:\\Bases\\Demo";\n')
     assert entries[0]['file_path'] == 'C:\\Bases\\Demo'
+
+
+def test_desktop_can_import_and_delete_user_skill(service, tmp_path) -> None:
+    source = tmp_path / "review-skill.md"
+    source.write_text(
+        "---\n"
+        "name: review-1c\n"
+        "description: Проверяет изменения перед применением\n"
+        "---\n\n"
+        "Сначала проверь инварианты и diff.\n",
+        encoding="utf-8",
+    )
+
+    added = service.import_skill(str(source))
+    assert added["name"] == "review-1c"
+    assert any(item["name"] == "review-1c" and item["source"] == "user" for item in service.skill_list())
+
+    skills = service.delete_skill("review-1c")
+    assert all(item["name"] != "review-1c" for item in skills)
+
+
+def test_desktop_exposes_builtin_onec_skill(service) -> None:
+    skills = service.skill_list()
+    assert any(item["name"] == "onec-engineering" and item["source"] == "builtin" for item in skills)
