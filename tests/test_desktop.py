@@ -48,7 +48,7 @@ def test_run_review_reject_preserves_bytes_without_git(service, monkeypatch):
     result = asyncio.run(service.run({'task': 'Измени код', 'check': False}))
     assert result['status'] == 'completed'
     assert result['files'][0]['original'] == 'старое\r\n'
-    assert result['files'][0]['modified'] == 'новое\n'
+    assert result['files'][0]['modified'].replace('\r\n', '\n') == 'новое\n'
     assert result['checks_ok'] is None
     with pytest.raises(ValueError, match='предыдущие'):
         asyncio.run(service.run({'task': 'Следующая', 'check': False}))
@@ -61,7 +61,7 @@ def test_provider_failure_keeps_recoverable_review(service, monkeypatch):
     monkeypatch.setattr(desktop_bridge, 'create_provider', lambda settings: provider)
     result = asyncio.run(service.run({'task': 'Измени', 'check': False}))
     assert result['status'] == 'failed'
-    assert result['files'][0]['modified'] == 'новое\n'
+    assert result['files'][0]['modified'].replace('\r\n', '\n') == 'новое\n'
     recovered = DesktopService(emit_event=lambda event: None)
     assert recovered.review()['id'] == result['id']
     with pytest.raises(ValueError, match='Незавершённый'):
@@ -124,3 +124,51 @@ def test_agent_cannot_read_secrets_or_patch_internal_state(service):
     agent = HarnessAgent(ScriptedProvider([]), service.workspace, allow_writes=True)
     assert agent._execute_tool('read', {'path': '.env'}).startswith('ERROR:')
     assert agent._execute_tool('patch', {'path': '.onec-harness/anything.xml', 'old': 'a', 'new': 'b'}).startswith('ERROR:')
+
+
+def test_apply_requires_real_backup_before_loading(service, monkeypatch):
+    from onec_harness.desktop_bridge import atomic_json, source_bytes
+    from onec_harness.onec.designer import CommandResult
+
+    s = service.settings
+    s.onec_ib_connection = '/F "C:\\primary"'
+    s.onec_staging_ib_connection = '/F "C:\\staging"'
+    state = source_bytes(service.workspace)
+    atomic_json(service.path, {'id': 'test', 'task': 'test', 'summary': 'done', 'steps': [],
+                              'before': {}, 'after': state, 'checks_ok': True, 'ui_test_ok': None,
+                              'status': 'completed', 'review_state': 'accepted',
+                              'primary_connection': s.onec_ib_connection,
+                              'staging_connection': s.onec_staging_ib_connection})
+    calls = []
+
+    class FakeDesigner:
+        def __init__(self, settings):
+            pass
+
+        def dump_infobase(self, target, execute):
+            calls.append('backup')
+            return CommandResult(command=[], returncode=0, executed=True)
+
+        def load_config(self, *args, **kwargs):
+            calls.append('load')
+            raise AssertionError('must not load without a nonempty backup')
+
+    monkeypatch.setattr(desktop_bridge, 'Designer', FakeDesigner)
+    with pytest.raises(ValueError, match='не создана'):
+        service.apply(True)
+    assert calls == ['backup']
+
+
+def test_new_file_and_deleted_file_review_and_restore(service):
+    from onec_harness.desktop_bridge import atomic_json, source_bytes
+
+    before = source_bytes(service.workspace)
+    (service.workspace.root / 'Модуль.bsl').unlink()
+    service.workspace.write_text('Новый.xml', '<new/>')
+    after = source_bytes(service.workspace)
+    atomic_json(service.path, {'before': before, 'after': after, 'status': 'failed', 'review_state': 'pending'})
+    files = service.review()['files']
+    assert any(f['created'] for f in files)
+    assert any(f['deleted'] for f in files)
+    service.decide('reject')
+    assert source_bytes(service.workspace) == before

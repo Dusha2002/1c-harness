@@ -119,7 +119,7 @@ export default function App() {
     : form.llm_provider === 'anthropic' ? 'anthropic_api_key' : 'llm_api_key';
 
   function field(key: string, title: string, placeholder: string) {
-    const secret = key.includes('password') || key.includes('api_key') || key === 'gigachat_credentials';
+    const secret = key.includes('password') || key.includes('api_key') || key === 'gigachat_credentials' || key === 'onec_com_connection';
     return <label className="settings-field" key={key}><span>{title}</span>
       <input type={secret ? 'password' : 'text'} value={form[key] ?? ''} autoComplete="off"
         placeholder={secret && settings?.secrets[key] ? 'Сохранён — оставьте пустым, чтобы не менять' : placeholder}

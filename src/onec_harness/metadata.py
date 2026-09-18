@@ -68,14 +68,14 @@ class ConfigurationIndex:
             relative = path.relative_to(root)
             parts = relative.parts
             if len(parts) >= 2 and parts[0] in METADATA_KINDS:
-                modules_by_object.setdefault((parts[0], parts[1]), []).append(str(relative))
+                modules_by_object.setdefault((parts[0], parts[1]), []).append(relative.as_posix())
             try:
                 text = path.read_text(encoding="utf-8-sig")
             except (UnicodeDecodeError, OSError):
                 continue
             for match in SYMBOL_RE.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
-                index.symbols.append(BslSymbol(name=match.group("name"), path=str(relative), line=line))
+                index.symbols.append(BslSymbol(name=match.group("name"), path=relative.as_posix(), line=line))
 
         for folder, kind in METADATA_KINDS.items():
             folder_path = root / folder
@@ -85,7 +85,7 @@ class ConfigurationIndex:
                 name = definition.stem
                 modules = tuple(sorted(modules_by_object.get((folder, name), [])))
                 index.objects.append(
-                    MetadataObject(kind=kind, name=name, definition_path=str(definition.relative_to(root)), modules=modules)
+                    MetadataObject(kind=kind, name=name, definition_path=definition.relative_to(root).as_posix(), modules=modules)
                 )
                 forms_dir = folder_path / name / "Forms"
                 if not forms_dir.exists():
@@ -93,12 +93,12 @@ class ConfigurationIndex:
                 for form_definition in sorted(forms_dir.glob("*.xml")):
                     form_name = form_definition.stem
                     form_module = forms_dir / form_name / "Ext" / "Form" / "Module.bsl"
-                    form_modules = (str(form_module.relative_to(root)),) if form_module.exists() else ()
+                    form_modules = (form_module.relative_to(root).as_posix(),) if form_module.exists() else ()
                     index.objects.append(
                         MetadataObject(
                             kind="form",
                             name=f"{kind}.{name}.{form_name}",
-                            definition_path=str(form_definition.relative_to(root)),
+                            definition_path=form_definition.relative_to(root).as_posix(),
                             modules=form_modules,
                         )
                     )
