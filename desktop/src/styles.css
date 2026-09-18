@@ -433,3 +433,302 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .scan-button:hover, .setup-scan-button:hover { background: #eef7f2; border-color: #bdd8ca; color: #2e7659; }
 .scan-button:disabled, .setup-scan-button:disabled { opacity: .55; cursor: default; }
 .setup-scan-button { justify-self: start; }
+
+
+.theme-setting {
+  display: grid;
+  grid-template-columns: 140px minmax(180px, 240px);
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 4px;
+  color: #68736c;
+  font-size: 12px;
+}
+.theme-setting select {
+  border: 1px solid #dee5e0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fcfdfc;
+  color: #34463b;
+}
+
+/* Dark theme */
+html[data-theme="dark"] {
+  --border: #2a3038;
+  --muted: #9099a5;
+  --muted-2: #707984;
+  --surface: #111418;
+  --surface-soft: #171b20;
+  --green: #55b88e;
+  --green-soft: #18352a;
+  --yellow: #d7b82f;
+  --danger: #e17878;
+  background: #0d1014;
+  color: #e5e9ee;
+}
+
+html[data-theme="dark"] body,
+html[data-theme="dark"] #root,
+html[data-theme="dark"] .app-shell {
+  background: #0d1014;
+  color: #e5e9ee;
+}
+
+html[data-theme="dark"] .topbar {
+  background: rgba(15,18,22,.96);
+  border-color: #2a3038;
+}
+html[data-theme="dark"] .brand-mark,
+html[data-theme="dark"] .icon-button:hover,
+html[data-theme="dark"] .soft-icon:hover,
+html[data-theme="dark"] .mode-pill,
+html[data-theme="dark"] .summary-chip,
+html[data-theme="dark"] .reject-button {
+  background: #1b2026;
+  color: #c7ced6;
+}
+html[data-theme="dark"] .brand-name,
+html[data-theme="dark"] .session-title,
+html[data-theme="dark"] .session-title > span:first-child,
+html[data-theme="dark"] .run-header,
+html[data-theme="dark"] .agent-summary,
+html[data-theme="dark"] .file-tab strong,
+html[data-theme="dark"] .welcome h2,
+html[data-theme="dark"] .empty-review h3 {
+  color: #e5e9ee;
+}
+html[data-theme="dark"] .connect-button {
+  background: #171c21;
+  border-color: #2a3038;
+  color: #c9d0d7;
+}
+html[data-theme="dark"] .connect-button.connected {
+  background: #14281f;
+  border-color: #24553f;
+  color: #78c7a5;
+}
+html[data-theme="dark"] .workspace-layout {
+  background: #0f1216;
+}
+html[data-theme="dark"] .conversation-pane,
+html[data-theme="dark"] .review-pane,
+html[data-theme="dark"] .review-footer {
+  background: #111418;
+  border-color: #2a3038;
+}
+html[data-theme="dark"] .conversation-scroll,
+html[data-theme="dark"] .composer-wrap {
+  background: #111418;
+}
+html[data-theme="dark"] .composer-wrap {
+  background: linear-gradient(180deg, rgba(17,20,24,0) 0%, #111418 15%);
+}
+html[data-theme="dark"] .user-bubble {
+  background: #20252b;
+  color: #d5dbe1;
+}
+html[data-theme="dark"] .agent-avatar,
+html[data-theme="dark"] .step-icon.running {
+  background: #18352a;
+  color: #65be99;
+}
+html[data-theme="dark"] .step-icon {
+  background: #111418;
+  border-color: #343b44;
+  color: #808a96;
+}
+html[data-theme="dark"] .steps-card {
+  border-color: #2b3239;
+}
+html[data-theme="dark"] .step-details summary,
+html[data-theme="dark"] .step-details pre,
+html[data-theme="dark"] .context-title,
+html[data-theme="dark"] .workspace-path,
+html[data-theme="dark"] .review-state,
+html[data-theme="dark"] .review-toolbar,
+html[data-theme="dark"] .empty-review,
+html[data-theme="dark"] .settings-intro,
+html[data-theme="dark"] .settings-note,
+html[data-theme="dark"] .connection-report {
+  color: #929ca7;
+}
+html[data-theme="dark"] .notice {
+  background: #171c21;
+  border-color: #2b3239;
+  color: #b9c1c9;
+}
+html[data-theme="dark"] .composer {
+  background: #15191e;
+  border-color: #303740;
+  box-shadow: 0 8px 30px rgba(0,0,0,.24);
+}
+html[data-theme="dark"] .composer textarea {
+  color: #e1e6eb;
+}
+html[data-theme="dark"] .composer textarea::placeholder {
+  color: #68717c;
+}
+html[data-theme="dark"] .send-button:disabled {
+  background: #343a42;
+}
+html[data-theme="dark"] .review-resizer {
+  background: #252b32;
+}
+html[data-theme="dark"] .review-resizer:hover,
+html[data-theme="dark"] .review-resizer:active {
+  background: #3f8e70;
+}
+html[data-theme="dark"] .review-header,
+html[data-theme="dark"] .review-toolbar,
+html[data-theme="dark"] .review-footer {
+  border-color: #2a3038;
+}
+html[data-theme="dark"] .review-toolbar {
+  background: #15191e;
+}
+html[data-theme="dark"] .review-header select,
+html[data-theme="dark"] .settings-field input,
+html[data-theme="dark"] .settings-field select,
+html[data-theme="dark"] .theme-setting select,
+html[data-theme="dark"] .setup-path-row input,
+html[data-theme="dark"] .setup-field input,
+html[data-theme="dark"] .setup-field select {
+  background: #171c21;
+  border-color: #303740;
+  color: #dce2e8;
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #68717c !important;
+}
+html[data-theme="dark"] .modal-backdrop,
+html[data-theme="dark"] .setup-backdrop {
+  background: rgba(4,7,10,.72);
+}
+html[data-theme="dark"] .settings-panel,
+html[data-theme="dark"] .setup-window,
+html[data-theme="dark"] .setup-loading {
+  background: #12161a;
+  color: #e4e9ee;
+  box-shadow: 0 26px 100px rgba(0,0,0,.5);
+}
+html[data-theme="dark"] .settings-heading h2,
+html[data-theme="dark"] .setup-brand strong,
+html[data-theme="dark"] .setup-copy h2,
+html[data-theme="dark"] .setup-choice strong,
+html[data-theme="dark"] .setup-ready strong {
+  color: #e4e9ee;
+}
+html[data-theme="dark"] .settings-field,
+html[data-theme="dark"] .theme-setting,
+html[data-theme="dark"] .setup-path-row label,
+html[data-theme="dark"] .setup-field {
+  color: #aeb7c0;
+}
+html[data-theme="dark"] .discovery-panel,
+html[data-theme="dark"] .skills-panel {
+  background: #151b1f;
+  border-color: #28352f;
+}
+html[data-theme="dark"] .discovery-title,
+html[data-theme="dark"] .skills-heading > div {
+  color: #83bba2;
+}
+html[data-theme="dark"] .scan-button,
+html[data-theme="dark"] .setup-scan-button,
+html[data-theme="dark"] .setup-browse,
+html[data-theme="dark"] .skill-add {
+  background: #18241f;
+  border-color: #2b4338;
+  color: #8ec7aa;
+}
+html[data-theme="dark"] .scan-button:hover,
+html[data-theme="dark"] .setup-scan-button:hover,
+html[data-theme="dark"] .setup-browse:hover {
+  background: #1d3027;
+  border-color: #3e6654;
+  color: #a9d7bf;
+}
+html[data-theme="dark"] .setup-progress,
+html[data-theme="dark"] .setup-footer {
+  background: #15191e;
+  border-color: #292f36;
+}
+html[data-theme="dark"] .setup-step > span {
+  background: #171c21;
+  border-color: #303740;
+}
+html[data-theme="dark"] .setup-choice,
+html[data-theme="dark"] .setup-provider,
+html[data-theme="dark"] .skill-row {
+  background: #171c21;
+  border-color: #2d343c;
+  color: #aeb7c0;
+}
+html[data-theme="dark"] .setup-choice.selected,
+html[data-theme="dark"] .setup-provider.selected {
+  background: #173126;
+  border-color: #32664f;
+  color: #87c7a8;
+}
+html[data-theme="dark"] .setup-choice small,
+html[data-theme="dark"] .setup-copy p,
+html[data-theme="dark"] .setup-brand span,
+html[data-theme="dark"] .skill-copy span,
+html[data-theme="dark"] .skills-note {
+  color: #828d98;
+}
+html[data-theme="dark"] .setup-staging-card {
+  background: #14251e;
+  border-color: #284a3b;
+}
+html[data-theme="dark"] .setup-staging-card strong {
+  color: #82c2a4;
+}
+html[data-theme="dark"] .setup-staging-card p {
+  color: #789287;
+}
+html[data-theme="dark"] .setup-ready {
+  border-color: #2c333b;
+}
+html[data-theme="dark"] .setup-ready > div {
+  border-color: #262d34;
+}
+html[data-theme="dark"] .setup-secondary {
+  background: #20252b;
+  color: #c0c7cf;
+}
+html[data-theme="dark"] .setup-warning {
+  background: #302a17;
+  border-color: #4b4020;
+  color: #d7c57a;
+}
+html[data-theme="dark"] .setup-error {
+  background: #321b1d;
+  border-color: #5a2d31;
+  color: #e3949a;
+}
+html[data-theme="dark"] .setup-running,
+html[data-theme="dark"] .setup-loading {
+  border-color: #29463a;
+  color: #8bc3a8;
+}
+html[data-theme="dark"] .skill-icon,
+html[data-theme="dark"] .skill-source,
+html[data-theme="dark"] .skill-notice,
+html[data-theme="dark"] .skills-note code {
+  background: #20262c;
+  color: #a6b0b9;
+}
+html[data-theme="dark"] .skill-source.builtin {
+  background: #18352a;
+  color: #83c6a5;
+}
+html[data-theme="dark"] .skill-copy strong {
+  color: #d9dfe5;
+}
+html[data-theme="dark"] .suggested-path {
+  background: #171c21;
+  border-color: #2f373f;
+  color: #aab3bc;
+}

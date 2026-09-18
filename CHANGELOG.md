@@ -1,5 +1,10 @@
 # v0.5 development preview
 
+- First-run setup now automatically scans for installed 1C and registered bases once; failed/interrupted scans can be retried manually.
+- Search buttons repaint immediately with independent spinners before the desktop bridge starts scanning.
+- Added system/light/dark themes with a quick top-bar toggle, persisted preference, Windows theme following and dark Monaco diff.
+- Broadened 1C platform discovery to ProgramW6432, LOCALAPPDATA installs and PATH.
+
 - Kept the packaged desktop bridge warm between ordinary UI actions, removing repeated PyInstaller startup latency.
 - Made workspace status lightweight by counting source files without reading every BSL/XML file.
 - Split 1C discovery into explicit user-triggered platform and registered-infobase scans.

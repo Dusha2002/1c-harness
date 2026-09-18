@@ -40,16 +40,65 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   const [selectedBase, setSelectedBase] = useState<DiscoveredInfobase | null>(null);
   const [autoStaging, setAutoStaging] = useState(true);
   const [busy, setBusy] = useState(true);
-  const [scanBusy, setScanBusy] = useState<'platforms' | 'bases' | null>(null);
+  const [platformScanBusy, setPlatformScanBusy] = useState(false);
+  const [baseScanBusy, setBaseScanBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
+
+  const nextPaint = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+  async function scanPlatforms(existingExe?: string | null) {
+    setPlatformScanBusy(true);
+    setError('');
+    await nextPaint();
+    try {
+      const found = await request<{executables: string[]; suggested_workspace: string}>('discover_platforms');
+      setDiscovery(current => ({
+        ...current,
+        executables: found.executables,
+        suggested_workspace: found.suggested_workspace,
+      }));
+      if (found.executables.length > 0 && !existingExe) {
+        setValue('onec_exe', found.executables[0]);
+      }
+      return found;
+    } catch (reason) {
+      setError(`Не удалось найти платформу 1С: ${String(reason)}`);
+      return null;
+    } finally {
+      setPlatformScanBusy(false);
+    }
+  }
+
+  async function scanBases(existingConnection?: string | null) {
+    setBaseScanBusy(true);
+    setError('');
+    await nextPaint();
+    try {
+      const found = await request<{infobases: DiscoveredInfobase[]; suggested_workspace: string}>('discover_bases');
+      setDiscovery(current => ({
+        ...current,
+        infobases: found.infobases,
+        suggested_workspace: found.suggested_workspace,
+      }));
+      if (found.infobases.length === 1 && !existingConnection) {
+        chooseBase(found.infobases[0]);
+      }
+      return found;
+    } catch (reason) {
+      setError(`Не удалось найти зарегистрированные базы: ${String(reason)}`);
+      return null;
+    } finally {
+      setBaseScanBusy(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
     Promise.all([
       request<DesktopSettings>('settings'),
       request<{suggested_workspace: string}>('discovery_defaults'),
-    ]).then(([saved, defaults]) => {
+    ]).then(async ([saved, defaults]) => {
       if (!active) return;
       const next = { ...saved.values };
       if ((!next.onec_workspace || next.onec_workspace === 'workspace') && defaults.suggested_workspace) {
@@ -58,36 +107,22 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       setSettings(saved);
       setDiscovery(current => ({ ...current, suggested_workspace: defaults.suggested_workspace }));
       setForm(next);
-    }).catch(reason => active && setError(String(reason)))
-      .finally(() => active && setBusy(false));
+      setBusy(false);
+
+      const firstRunKey = 'onec-harness:first-discovery-v2';
+      if (localStorage.getItem(firstRunKey) !== 'done') {
+        localStorage.setItem(firstRunKey, 'running');
+        await scanPlatforms(next.onec_exe);
+        if (active) await scanBases(next.onec_ib_connection);
+        localStorage.setItem(firstRunKey, 'done');
+      }
+    }).catch(reason => {
+      if (active) setError(String(reason));
+    }).finally(() => {
+      if (active) setBusy(false);
+    });
     return () => { active = false; };
   }, []);
-
-  async function scanPlatforms() {
-    setScanBusy('platforms'); setError('');
-    try {
-      const found = await request<{executables: string[]; suggested_workspace: string}>('discover_platforms');
-      setDiscovery(current => ({ ...current, executables: found.executables, suggested_workspace: found.suggested_workspace }));
-      if (found.executables.length > 0 && !form.onec_exe) setValue('onec_exe', found.executables[0]);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setScanBusy(null);
-    }
-  }
-
-  async function scanBases() {
-    setScanBusy('bases'); setError('');
-    try {
-      const found = await request<{infobases: DiscoveredInfobase[]; suggested_workspace: string}>('discover_bases');
-      setDiscovery(current => ({ ...current, infobases: found.infobases, suggested_workspace: found.suggested_workspace }));
-      if (found.infobases.length === 1 && !form.onec_ib_connection) chooseBase(found.infobases[0]);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setScanBusy(null);
-    }
-  }
 
   const secretKey = form.llm_provider === 'gigachat' ? 'gigachat_credentials'
     : form.llm_provider === 'anthropic' ? 'anthropic_api_key' : 'llm_api_key';
@@ -186,10 +221,10 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       <div className="setup-body">
         {step === 0 && <div className="setup-section">
           <div className="setup-copy"><h2>Выбери платформу 1С</h2>
-            <p>Поиск по компьютеру не запускается автоматически. Можно найти установленную платформу кнопкой или выбрать 1cv8.exe вручную.</p></div>
-          <button className="setup-scan-button" disabled={scanBusy !== null} onClick={() => void scanPlatforms()}>
-            {scanBusy === 'platforms' ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}
-            {scanBusy === 'platforms' ? 'Ищу установленную 1С…' : 'Найти установленную 1С'}
+            <p>При первом запуске Harness ищет 1С автоматически. Если поиск не сработал, его можно повторить кнопкой или выбрать 1cv8.exe вручную.</p></div>
+          <button className="setup-scan-button" disabled={platformScanBusy} onClick={() => void scanPlatforms(form.onec_exe)}>
+            {platformScanBusy ? <LoaderCircle className="spin" size={15}/> : <Search size={15}/>}
+            {platformScanBusy ? 'Ищу установленную 1С…' : discovery.executables.length ? 'Найти 1С снова' : 'Найти установленную 1С'}
           </button>
           <div className="setup-choice-list">
             {discovery.executables.map((exe, i) => <button key={exe} className={`setup-choice ${form.onec_exe === exe ? 'selected' : ''}`} onClick={() => setValue('onec_exe', exe)}>
@@ -202,9 +237,9 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
 
         {step === 1 && <div className="setup-section">
           <div className="setup-copy"><h2>Выбери рабочую базу</h2><p>Основная база не используется для автономных проверок. Для них нужна отдельная staging-копия.</p></div>
-          <button className="setup-scan-button" disabled={scanBusy !== null} onClick={() => void scanBases()}>
-            {scanBusy === 'bases' ? <LoaderCircle className="spin" size={15}/> : <Database size={15}/>}
-            {scanBusy === 'bases' ? 'Ищу зарегистрированные базы…' : 'Найти зарегистрированные базы'}
+          <button className="setup-scan-button" disabled={baseScanBusy} onClick={() => void scanBases(form.onec_ib_connection)}>
+            {baseScanBusy ? <LoaderCircle className="spin" size={15}/> : <Database size={15}/>}
+            {baseScanBusy ? 'Ищу зарегистрированные базы…' : discovery.infobases.length ? 'Найти базы снова' : 'Найти зарегистрированные базы'}
           </button>
           <div className="setup-choice-list base-list">
             {discovery.infobases.map(base => <button key={base.connection} className={`setup-choice ${form.onec_ib_connection === base.connection ? 'selected' : ''}`} onClick={() => chooseBase(base)}>

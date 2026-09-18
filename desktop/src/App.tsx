@@ -1,5 +1,5 @@
 import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
-import { Bot, Check, Code2, Database, FileCode2, PanelRightClose, PanelRightOpen, RefreshCw, Search, Send, Settings, Square, X } from 'lucide-react';
+import { Bot, Check, Code2, Database, FileCode2, Moon, PanelRightClose, PanelRightOpen, RefreshCw, Search, Send, Settings, Square, Sun, X } from 'lucide-react';
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { request, type Progress } from './lib/harness';
 import SetupWizard from './SetupWizard';
@@ -45,6 +45,19 @@ const settingFields = [
   ['onec_password', 'Пароль 1С', ''],
 ];
 
+type ThemeMode = 'system' | 'light' | 'dark';
+type ResolvedTheme = 'light' | 'dark';
+
+function storedTheme(): ThemeMode {
+  const value = localStorage.getItem('onec-harness:theme');
+  return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+}
+
+function resolveTheme(mode: ThemeMode): ResolvedTheme {
+  if (mode === 'light' || mode === 'dark') return mode;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export default function App() {
   const [doctor, setDoctor] = useState<HarnessDoctor | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -66,6 +79,8 @@ export default function App() {
   const [reviewOpen, setReviewOpen] = useState(true);
   const [reviewWidth, setReviewWidth] = useState(() => Math.max(520, Math.round(window.innerWidth * 0.54)));
   const [scanBusy, setScanBusy] = useState<'platforms' | 'bases' | null>(null);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => storedTheme());
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(storedTheme()));
   const pending = session?.review_state === 'pending';
   const file = session?.files[active];
 
@@ -75,6 +90,20 @@ export default function App() {
     setSession(state.session);
     return state.doctor;
   }
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const next = themeMode === 'system' ? (media.matches ? 'dark' : 'light') : themeMode;
+      document.documentElement.dataset.theme = next;
+      document.documentElement.style.colorScheme = next;
+      setResolvedTheme(next);
+      localStorage.setItem('onec-harness:theme', themeMode);
+    };
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, [themeMode]);
+
   useEffect(() => {
     refresh()
       .then(status => { if (!status.can_run) setSetupOpen(true); })
@@ -96,8 +125,11 @@ export default function App() {
     });
   }
 
+  const nextPaint = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
   async function scanPlatforms() {
     setScanBusy('platforms'); setNotice('');
+    await nextPaint();
     try {
       const found = await request<{executables: string[]; suggested_workspace: string}>('discover_platforms');
       setDiscovery(current => ({
@@ -120,6 +152,7 @@ export default function App() {
 
   async function scanBases() {
     setScanBusy('bases'); setNotice('');
+    await nextPaint();
     try {
       const found = await request<{infobases: DiscoveryResult['infobases']; suggested_workspace: string}>('discover_bases');
       setDiscovery(current => ({
@@ -130,6 +163,7 @@ export default function App() {
       if (found.infobases.length === 1) {
         setForm(current => ({ ...current, onec_ib_connection: current.onec_ib_connection || found.infobases[0].connection }));
       }
+      if (found.infobases.length === 0) setNotice('Зарегистрированные базы не найдены. Можно указать подключение или папку базы вручную.');
     } catch (error) {
       setNotice(String(error));
     } finally {
@@ -151,6 +185,10 @@ export default function App() {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  }
+
+  function toggleTheme() {
+    setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark');
   }
 
   async function saveSettings() {
@@ -212,6 +250,7 @@ export default function App() {
         <button className="connect-button" disabled={busy || pending} onClick={() => void openSettings()}><span className="onec-badge">1C</span>Подключение и модель</button>
         <button className="icon-button" aria-label="Обновить состояние" disabled={busy} onClick={() => void action(async () => { await refresh(); })}><RefreshCw size={17}/></button>
         <button className="icon-button" aria-label={reviewOpen ? "Скрыть панель кода" : "Показать панель кода"} onClick={() => setReviewOpen(value => !value)}>{reviewOpen ? <PanelRightClose size={18}/> : <PanelRightOpen size={18}/>}</button>
+        <button className="icon-button" aria-label={resolvedTheme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"} onClick={toggleTheme}>{resolvedTheme === "dark" ? <Sun size={18}/> : <Moon size={18}/>}</button>
         <button className="icon-button" aria-label="Настройки" disabled={busy || pending} onClick={() => void openSettings()}><Settings size={18}/></button>
       </div>
     </header>
@@ -267,7 +306,7 @@ export default function App() {
         </div>
         <div className="review-toolbar">{session?.review_state === 'accepted' && session.files.length > 0 && <button className="toolbar-action" disabled={busy || session.checks_ok !== true || session.deployment === 'applied'} onClick={() => setApplyOpen(true)}>{session.deployment === 'applied' ? 'Применено в 1С' : 'Применить в 1С…'}</button>}<span>{file ? `${active + 1} / ${session?.files.length} · ${file.created ? 'Новый файл' : file.deleted ? 'Удаление' : 'Изменение'}` : 'Здесь появится сравнение кода'}</span></div>
         <div className="editor-wrap">{file ? <DiffEditor beforeMount={registerBsl} original={file.original} modified={file.modified}
-          language={file.path.endsWith('.bsl') ? 'bsl' : 'xml'} theme="vs" options={{readOnly: true, renderSideBySide: false, automaticLayout: true, minimap: {enabled: false}, fontSize: 13, lineHeight: 22, scrollBeyondLastLine: false, wordWrap: 'on'}}/>
+          language={file.path.endsWith('.bsl') ? 'bsl' : 'xml'} theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'} options={{readOnly: true, renderSideBySide: false, automaticLayout: true, minimap: {enabled: false}, fontSize: 13, lineHeight: 22, scrollBeyondLastLine: false, wordWrap: 'on'}}/>
           : <div className="empty-review"><Code2 size={38} strokeWidth={1}/><h3>Каждое изменение — на виду</h3><p>Полный код до и после.<br/>Принятие или отклонение всей задачи.</p></div>}</div>
         <div className="review-footer"><span className={`review-state ${session?.review_state}`}>{pending ? 'Ожидает вашего решения' : session?.review_state === 'accepted' ? 'Сохранено в исходниках' : session?.review_state === 'rejected' ? 'Исходники восстановлены' : 'Нет изменений'}</span>
           <div className="review-buttons"><button className="reject-button" disabled={!pending || busy} onClick={() => void action(async () => setSession(await request<Session>('reject')))}>Отклонить всё</button><button className="accept-button" disabled={!pending || busy || session?.status !== 'completed' || session?.checks_ok === false} onClick={() => void action(async () => setSession(await request<Session>('accept')))}><Check size={15}/>Принять всё</button></div>
@@ -278,6 +317,13 @@ export default function App() {
     {settingsOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-heading"><h2 id="settings-title">Подключение</h2><button className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={() => setSettingsOpen(false)}><X size={20}/></button></div>
       <p className="settings-intro">Настройте модель и 1С здесь. Для проверок используйте отдельную копию базы. Принятие правок сохраняет исходники; основная база автоматически не обновляется.</p>
+      <label className="theme-setting"><span>Тема интерфейса</span>
+        <select value={themeMode} onChange={event => setThemeMode(event.target.value as ThemeMode)}>
+          <option value="system">Как в Windows</option>
+          <option value="light">Светлая</option>
+          <option value="dark">Тёмная</option>
+        </select>
+      </label>
       <div className="discovery-panel">
         <div className="discovery-title-row"><div className="discovery-title">Автообнаружение 1С</div><span>Запускается только вручную</span></div>
         <div className="discovery-actions">
