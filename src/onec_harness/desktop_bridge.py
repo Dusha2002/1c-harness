@@ -22,6 +22,7 @@ from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler
 from onec_harness.providers.base import Message
 from onec_harness.providers.factory import create_provider
+from onec_harness.skills import SkillStore
 from onec_harness.workspace import Workspace
 
 
@@ -51,6 +52,7 @@ class DesktopService:
         self.workspace = Workspace(self.settings.onec_workspace)
         self.path = self.workspace.root / '.onec-harness' / 'desktop-session.json'
         self.emit = emit_event
+        self.skills = SkillStore(config_root() / 'skills')
 
     def read_session(self) -> dict | None:
         return json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else None
@@ -103,6 +105,16 @@ class DesktopService:
         require_test_connection(self.settings.onec_ib_connection, connection)
         write_config({'onec_staging_ib_connection': connection})
         return {'connection': connection, 'path': str(target_path)}
+
+    def skill_list(self) -> list[dict[str, Any]]:
+        return [asdict(item) for item in self.skills.list()]
+
+    def import_skill(self, path: str) -> dict[str, Any]:
+        return asdict(self.skills.import_file(path))
+
+    def delete_skill(self, name: str) -> list[dict[str, Any]]:
+        self.skills.delete(name)
+        return self.skill_list()
 
     def doctor(self) -> dict:
         s = self.settings
@@ -173,7 +185,7 @@ class DesktopService:
             runtime=ComConnector(s), scenario_compiler=ScenarioCompiler(s.onec_test_host, s.onec_test_port),
             test_runner=TestManagerRunner(s, self.workspace) if request.get('ui_test') and check else None,
             execute_ui_tests=bool(request.get('ui_test') and check),
-            on_event=progress, cancelled=cancel_path.exists,
+            on_event=progress, cancelled=cancel_path.exists, skills=self.skills,
         )
         context = ''
         if previous and previous['review_state'] == 'accepted':
@@ -273,6 +285,12 @@ class DesktopService:
             return self.doctor()
         if op == 'discover':
             return self.discover()
+        if op == 'skills':
+            return self.skill_list()
+        if op == 'import_skill':
+            return self.import_skill(str(request.get('path', '')))
+        if op == 'delete_skill':
+            return self.delete_skill(str(request.get('name', '')))
         if op == 'prepare_staging':
             return self.prepare_staging(request.get('target'))
         if op == 'session':
