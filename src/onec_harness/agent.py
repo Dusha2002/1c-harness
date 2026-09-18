@@ -476,6 +476,8 @@ class HarnessAgent:
                     return f"Run check_extension_modules successfully for {extension} before finish."
                 if state.config_ok is not True:
                     return f"Run check_extension_config successfully for {extension} before finish."
+        if self.execute_ui_tests and self._source_changed and not self._ui_test_attempted:
+            return "UI testing was requested. Run run_ui_test before finish."
         if self._ui_test_attempted and self._ui_test_ok is not True:
             return "The latest E2E UI test failed. Fix the problem or rollback before finish."
         return None

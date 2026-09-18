@@ -172,3 +172,10 @@ def test_new_file_and_deleted_file_review_and_restore(service):
     assert any(f['deleted'] for f in files)
     service.decide('reject')
     assert source_bytes(service.workspace) == before
+
+
+def test_requested_ui_test_cannot_silently_finish(service):
+    agent = HarnessAgent(ScriptedProvider([]), service.workspace, execute_ui_tests=True)
+    agent._source_changed = True
+    agent._diff_seen = True
+    assert 'run_ui_test' in agent._finish_block_reason()
