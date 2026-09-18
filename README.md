@@ -4,7 +4,7 @@ Model-agnostic AI harness and desktop review app for safe development and automa
 
 The target is a local **“Codex / Claude Code for 1C”**: an agent that understands metadata and BSL, edits exported sources, validates changes in a disposable staging infobase, inspects runtime data through `V83.COMConnector`, and verifies UI behavior through the standard Test Client/Test Manager stack.
 
-## v0.4 desktop workflow
+## v0.5 desktop workflow
 
 **Development preview, not a production certification.** Automated tests and installer builds cannot verify Designer,
 COM and Test Manager behavior without a licensed Windows + 1C installation. Target: 1C 8.3 XML source exports and BSL.
@@ -40,6 +40,30 @@ Ask the agent to add a harmless message, inspect every changed file, verify actu
 that the bytes were restored. Repeat, accept, then test the explicit deployment and confirm the behavior in 1C.
 For forms, separately configure a Test Manager infobase and enable UI-test. Record platform/configuration versions,
 Designer logs and the session result when reporting a failure. These native tests are still required before production use.
+
+## Native Skills
+
+The base system prompt stays compact. It contains the Harness tool protocol plus a catalog of skill:// links.
+Full skill instructions are loaded lazily by the model through `load_skill` only when relevant, then remain in the
+current agent-run context. Built-ins include:
+
+- `skill://onec-engineering` — practical 1C/BSL workflow, metadata/source discovery, staging checks and 1C-specific performance rules;
+- `skill://highload-systems` — bottleneck analysis, scaling, queues, caching, database and resilience trade-offs.
+
+Custom Markdown/TXT skills can be added from **Settings → Skills** with the native file picker. Optional frontmatter:
+
+```markdown
+---
+name: my-review
+description: Review changes using our project checklist
+---
+
+# Instructions
+...
+```
+
+User skills are stored per user. Their full bodies are not inserted into every system prompt. Skills can change the
+agent's working method but cannot grant new permissions, bypass staging, enable runtime writes or override Harness safety gates.
 
 ## v0.3 capabilities
 
@@ -182,4 +206,4 @@ npm run tauri dev
 
 ## Status
 
-**v0.4 development preview.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.
+**v0.5 development preview.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.
