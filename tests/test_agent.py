@@ -164,6 +164,7 @@ def test_agent_skill_catalog_is_lazy_and_load_skill_adds_body(tmp_path: Path) ->
     assert "skill://onec-engineering" in first_system
     assert "Избегай запросов и циклов N+1" not in first_system
     second_call = provider.messages[1]
+    assert sum(message.role == "system" for message in second_call) == 1
     tool_result = next(message.content for message in second_call if message.content.startswith("TOOL_RESULT load_skill:"))
     assert "SKILL_LOADED skill://onec-engineering" in tool_result
     assert "Избегай запросов и циклов N+1" in tool_result
