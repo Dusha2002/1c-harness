@@ -88,7 +88,11 @@ class DesktopService:
         if not source.is_dir():
             raise ValueError(f'Папка основной файловой базы не найдена: {source}')
         target_path = Path(target).expanduser() if target else source.with_name(source.name + '-harness-staging')
+        connection = f'/F "{target_path}"'
         if target_path.exists():
+            configured = self.settings.onec_staging_ib_connection.strip()
+            if configured and connection_identity(configured) == connection_identity(connection):
+                return {'connection': connection, 'path': str(target_path), 'existing': True}
             raise ValueError(f'Папка staging уже существует: {target_path}. Выберите другую папку.')
         try:
             shutil.copytree(source, target_path)
@@ -96,7 +100,6 @@ class DesktopService:
             if target_path.exists():
                 shutil.rmtree(target_path, ignore_errors=True)
             raise ValueError(f'Не удалось создать staging-копию: {exc}') from exc
-        connection = f'/F "{target_path}"'
         require_test_connection(self.settings.onec_ib_connection, connection)
         write_config({'onec_staging_ib_connection': connection})
         return {'connection': connection, 'path': str(target_path)}
