@@ -2,7 +2,7 @@ import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
 import { Bot, Check, Code2, Database, FileCode2, RefreshCw, Send, Settings, Square, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { request, type Progress } from './lib/harness';
-import type { DesktopSettings, HarnessDoctor, Session } from './types';
+import type { DesktopSettings, DiscoveryResult, HarnessDoctor, Session } from './types';
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
   monaco.languages.register({ id: "bsl" });
@@ -54,6 +54,7 @@ export default function App() {
   const [currentTool, setCurrentTool] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings | null>(null);
+  const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
   const [form, setForm] = useState<Record<string, string | null>>({});
   const [check, setCheck] = useState(true);
   const [uiTest, setUiTest] = useState(false);
@@ -65,9 +66,12 @@ export default function App() {
     const status = await request<HarnessDoctor>('doctor');
     setDoctor(status);
     setSession(await request<Session | null>('session'));
+    return status;
   }
   useEffect(() => {
-    refresh().catch(error => setNotice(`Не удалось связаться с приложением: ${String(error)}`));
+    refresh()
+      .then(status => { if (!status.can_run) void openSettings(); })
+      .catch(error => setNotice(`Не удалось связаться с приложением: ${String(error)}`));
   }, []);
 
   async function action(work: () => Promise<void>) {
@@ -78,8 +82,19 @@ export default function App() {
 
   async function openSettings() {
     await action(async () => {
-      const result = await request<DesktopSettings>('settings');
-      setSettings(result); setForm(result.values); setSettingsOpen(true);
+      const [result, found] = await Promise.all([
+        request<DesktopSettings>('settings'),
+        request<DiscoveryResult>('discover'),
+      ]);
+      const next = { ...result.values };
+      if (!next.onec_exe && found.executables.length) next.onec_exe = found.executables[0];
+      if ((!next.onec_workspace || next.onec_workspace === 'workspace') && found.suggested_workspace) {
+        next.onec_workspace = found.suggested_workspace;
+      }
+      if (!next.onec_ib_connection && found.infobases.length === 1) {
+        next.onec_ib_connection = found.infobases[0].connection;
+      }
+      setSettings(result); setDiscovery(found); setForm(next); setSettingsOpen(true);
     });
   }
 
@@ -199,6 +214,35 @@ export default function App() {
     {settingsOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-heading"><h2 id="settings-title">Подключение</h2><button className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={() => setSettingsOpen(false)}><X size={20}/></button></div>
       <p className="settings-intro">Настройте модель и 1С здесь. Для проверок используйте отдельную копию базы. Принятие правок сохраняет исходники; основная база автоматически не обновляется.</p>
+      {discovery && <div className="discovery-panel">
+        <div className="discovery-title">Автообнаружение 1С</div>
+        <div className="settings-grid compact-grid">
+          <label className="settings-field"><span>Установленная платформа</span>
+            <select value={form.onec_exe ?? ''} onChange={event => changeField('onec_exe', event.target.value)}>
+              <option value="">Не выбрано</option>
+              {discovery.executables.map(exe => <option key={exe} value={exe}>{exe}</option>)}
+            </select>
+          </label>
+          <label className="settings-field"><span>Основная база</span>
+            <select value={form.onec_ib_connection ?? ''} onChange={event => changeField('onec_ib_connection', event.target.value)}>
+              <option value="">Не выбрано</option>
+              {discovery.infobases.map(base => <option key={`primary-${base.connection}`} value={base.connection}>{base.name}</option>)}
+            </select>
+          </label>
+          <label className="settings-field"><span>Staging-база</span>
+            <select value={form.onec_staging_ib_connection ?? ''} onChange={event => changeField('onec_staging_ib_connection', event.target.value)}>
+              <option value="">Выберите отдельную копию</option>
+              {discovery.infobases.filter(base => base.connection !== form.onec_ib_connection)
+                .map(base => <option key={`staging-${base.connection}`} value={base.connection}>{base.name}</option>)}
+            </select>
+          </label>
+          <label className="settings-field"><span>Workspace</span>
+            <div className="suggested-path">{form.onec_workspace ?? discovery.suggested_workspace}</div>
+          </label>
+        </div>
+        {discovery.executables.length === 0 && <small>Платформа не найдена автоматически — путь можно указать ниже вручную.</small>}
+        {discovery.infobases.length === 0 && <small>Зарегистрированные базы не найдены — подключение можно указать ниже вручную.</small>}
+      </div>}
       <div className="settings-grid"><label className="settings-field"><span>Провайдер ИИ</span><select value={form.llm_provider ?? 'gigachat'} onChange={event => changeField('llm_provider', event.target.value)}>{['gigachat','openai','deepseek','anthropic','openai_compatible'].map(provider => <option key={provider} value={provider}>{provider}</option>)}</select></label>
         {field(secretKey, form.llm_provider === 'gigachat' ? 'Authorization Key GigaChat' : 'API-ключ', '')}
         {settingFields.map(([key, title, placeholder]) => field(key, title, placeholder))}
