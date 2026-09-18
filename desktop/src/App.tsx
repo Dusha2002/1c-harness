@@ -157,7 +157,7 @@ export default function App() {
     await action(async () => {
       const result = await request<DesktopSettings>('save_settings', { values: form });
       setSettings(result); setForm(result.values);
-      await refresh();
+      setDoctor(await request<HarnessDoctor>('doctor'));
       setNotice('Настройки сохранены. Можно проверить модель и выгрузить исходники.');
     });
   }
