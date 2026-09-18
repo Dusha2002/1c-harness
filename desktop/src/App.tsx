@@ -1,8 +1,9 @@
 import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
-import { Bot, Check, Code2, Database, FileCode2, RefreshCw, Send, Settings, Square, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Bot, Check, Code2, Database, FileCode2, PanelRightClose, PanelRightOpen, RefreshCw, Search, Send, Settings, Square, X } from 'lucide-react';
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { request, type Progress } from './lib/harness';
 import SetupWizard from './SetupWizard';
+import SkillsPanel from './SkillsPanel';
 import type { DesktopSettings, DiscoveryResult, HarnessDoctor, Session } from './types';
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
@@ -32,6 +33,7 @@ const labels: Record<string, string> = {
   symbols: 'Поиск процедур и функций', patch: 'Изменение кода', diff: 'Просмотр изменений',
   stage_config: 'Загрузка в тестовую базу', check_modules: 'Проверка модулей 1С', check_config: 'Проверка конфигурации',
   run_ui_test: 'Тест интерфейса 1С', runtime_query: 'Запрос к 1С', rollback: 'Восстановление исходников',
+  list_skills: 'Список skills', load_skill: 'Загрузка skill',
 };
 const settingFields = [
   ['llm_model', 'Модель', 'Например, GigaChat-3-Ultra'],
@@ -61,6 +63,9 @@ export default function App() {
   const [check, setCheck] = useState(true);
   const [uiTest, setUiTest] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(true);
+  const [reviewWidth, setReviewWidth] = useState(() => Math.max(520, Math.round(window.innerWidth * 0.54)));
+  const [scanBusy, setScanBusy] = useState<'platforms' | 'bases' | null>(null);
   const pending = session?.review_state === 'pending';
   const file = session?.files[active];
 
@@ -84,27 +89,75 @@ export default function App() {
 
   async function openSettings() {
     await action(async () => {
-      const [result, found] = await Promise.all([
-        request<DesktopSettings>('settings'),
-        request<DiscoveryResult>('discover'),
-      ]);
-      const next = { ...result.values };
-      if (!next.onec_exe && found.executables.length) next.onec_exe = found.executables[0];
-      if ((!next.onec_workspace || next.onec_workspace === 'workspace') && found.suggested_workspace) {
-        next.onec_workspace = found.suggested_workspace;
-      }
-      if (!next.onec_ib_connection && found.infobases.length === 1) {
-        next.onec_ib_connection = found.infobases[0].connection;
-      }
-      setSettings(result); setDiscovery(found); setForm(next); setSettingsOpen(true);
+      const result = await request<DesktopSettings>('settings');
+      setSettings(result);
+      setForm({ ...result.values });
+      setSettingsOpen(true);
     });
+  }
+
+  async function scanPlatforms() {
+    setScanBusy('platforms'); setNotice('');
+    try {
+      const found = await request<{executables: string[]; suggested_workspace: string}>('discover_platforms');
+      setDiscovery(current => ({
+        executables: found.executables,
+        infobases: current?.infobases ?? [],
+        suggested_workspace: found.suggested_workspace,
+      }));
+      setForm(current => ({
+        ...current,
+        onec_exe: current.onec_exe || found.executables[0] || null,
+        onec_workspace: (!current.onec_workspace || current.onec_workspace === 'workspace')
+          ? found.suggested_workspace : current.onec_workspace,
+      }));
+    } catch (error) {
+      setNotice(String(error));
+    } finally {
+      setScanBusy(null);
+    }
+  }
+
+  async function scanBases() {
+    setScanBusy('bases'); setNotice('');
+    try {
+      const found = await request<{infobases: DiscoveryResult['infobases']; suggested_workspace: string}>('discover_bases');
+      setDiscovery(current => ({
+        executables: current?.executables ?? [],
+        infobases: found.infobases,
+        suggested_workspace: found.suggested_workspace,
+      }));
+      if (found.infobases.length === 1) {
+        setForm(current => ({ ...current, onec_ib_connection: current.onec_ib_connection || found.infobases[0].connection }));
+      }
+    } catch (error) {
+      setNotice(String(error));
+    } finally {
+      setScanBusy(null);
+    }
+  }
+
+  function startReviewResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!reviewOpen) return;
+    event.preventDefault();
+    const onMove = (move: PointerEvent) => {
+      const min = 380;
+      const max = Math.max(min, window.innerWidth - 380);
+      setReviewWidth(Math.min(max, Math.max(min, window.innerWidth - move.clientX)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
 
   async function saveSettings() {
     await action(async () => {
       const result = await request<DesktopSettings>('save_settings', { values: form });
       setSettings(result); setForm(result.values);
-      await refresh();
+      setDoctor(await request<HarnessDoctor>('doctor'));
       setNotice('Настройки сохранены. Можно проверить модель и выгрузить исходники.');
     });
   }
@@ -158,10 +211,14 @@ export default function App() {
       <div className="top-actions">
         <button className="connect-button" disabled={busy || pending} onClick={() => void openSettings()}><span className="onec-badge">1C</span>Подключение и модель</button>
         <button className="icon-button" aria-label="Обновить состояние" disabled={busy} onClick={() => void action(async () => { await refresh(); })}><RefreshCw size={17}/></button>
+        <button className="icon-button" aria-label={reviewOpen ? "Скрыть панель кода" : "Показать панель кода"} onClick={() => setReviewOpen(value => !value)}>{reviewOpen ? <PanelRightClose size={18}/> : <PanelRightOpen size={18}/>}</button>
         <button className="icon-button" aria-label="Настройки" disabled={busy || pending} onClick={() => void openSettings()}><Settings size={18}/></button>
       </div>
     </header>
-    <main className="workspace-layout">
+    <main
+      className={`workspace-layout ${reviewOpen ? '' : 'review-collapsed'}`}
+      style={{ gridTemplateColumns: reviewOpen ? `minmax(360px, 1fr) 6px ${reviewWidth}px` : '1fr 0 0' }}
+    >
       <section className="conversation-pane">
         <div className="conversation-scroll">
           {(running || session) && <div className="user-bubble">{running ? task : session?.task}</div>}
@@ -203,13 +260,14 @@ export default function App() {
           </div>
         </div>
       </section>
-      <section className="review-pane">
+      {reviewOpen && <div className="review-resizer" role="separator" aria-orientation="vertical" onPointerDown={startReviewResize} />}
+      <section className={`review-pane ${reviewOpen ? '' : 'hidden'}`}>
         <div className="review-header"><div className="file-tab"><FileCode2 size={16}/><strong>Изменения</strong></div>
-          {session && session.files.length > 0 && <select aria-label="Изменённый файл" value={active} onChange={event => setActive(Number(event.target.value))}>{session.files.map((item, index) => <option key={item.path} value={index}>{item.path}</option>)}</select>}
+          <div className="review-header-actions">{session && session.files.length > 0 && <select aria-label="Изменённый файл" value={active} onChange={event => setActive(Number(event.target.value))}>{session.files.map((item, index) => <option key={item.path} value={index}>{item.path}</option>)}</select>}<button className="icon-button compact" aria-label="Скрыть панель кода" onClick={() => setReviewOpen(false)}><PanelRightClose size={16}/></button></div>
         </div>
         <div className="review-toolbar">{session?.review_state === 'accepted' && session.files.length > 0 && <button className="toolbar-action" disabled={busy || session.checks_ok !== true || session.deployment === 'applied'} onClick={() => setApplyOpen(true)}>{session.deployment === 'applied' ? 'Применено в 1С' : 'Применить в 1С…'}</button>}<span>{file ? `${active + 1} / ${session?.files.length} · ${file.created ? 'Новый файл' : file.deleted ? 'Удаление' : 'Изменение'}` : 'Здесь появится сравнение кода'}</span></div>
         <div className="editor-wrap">{file ? <DiffEditor beforeMount={registerBsl} original={file.original} modified={file.modified}
-          language={file.path.endsWith('.bsl') ? 'bsl' : 'xml'} theme="vs" options={{readOnly: true, renderSideBySide: false, minimap: {enabled: false}, fontSize: 13, lineHeight: 22, scrollBeyondLastLine: false, wordWrap: 'on'}}/>
+          language={file.path.endsWith('.bsl') ? 'bsl' : 'xml'} theme="vs" options={{readOnly: true, renderSideBySide: false, automaticLayout: true, minimap: {enabled: false}, fontSize: 13, lineHeight: 22, scrollBeyondLastLine: false, wordWrap: 'on'}}/>
           : <div className="empty-review"><Code2 size={38} strokeWidth={1}/><h3>Каждое изменение — на виду</h3><p>Полный код до и после.<br/>Принятие или отклонение всей задачи.</p></div>}</div>
         <div className="review-footer"><span className={`review-state ${session?.review_state}`}>{pending ? 'Ожидает вашего решения' : session?.review_state === 'accepted' ? 'Сохранено в исходниках' : session?.review_state === 'rejected' ? 'Исходники восстановлены' : 'Нет изменений'}</span>
           <div className="review-buttons"><button className="reject-button" disabled={!pending || busy} onClick={() => void action(async () => setSession(await request<Session>('reject')))}>Отклонить всё</button><button className="accept-button" disabled={!pending || busy || session?.status !== 'completed' || session?.checks_ok === false} onClick={() => void action(async () => setSession(await request<Session>('accept')))}><Check size={15}/>Принять всё</button></div>
@@ -220,41 +278,41 @@ export default function App() {
     {settingsOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-heading"><h2 id="settings-title">Подключение</h2><button className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={() => setSettingsOpen(false)}><X size={20}/></button></div>
       <p className="settings-intro">Настройте модель и 1С здесь. Для проверок используйте отдельную копию базы. Принятие правок сохраняет исходники; основная база автоматически не обновляется.</p>
-      {discovery && <div className="discovery-panel">
-        <div className="discovery-title">Автообнаружение 1С</div>
-        <div className="settings-grid compact-grid">
-          <label className="settings-field"><span>Установленная платформа</span>
+      <div className="discovery-panel">
+        <div className="discovery-title-row"><div className="discovery-title">Автообнаружение 1С</div><span>Запускается только вручную</span></div>
+        <div className="discovery-actions">
+          <button className="scan-button" disabled={scanBusy !== null} onClick={() => void scanPlatforms()}><Search size={14}/>{scanBusy === 'platforms' ? 'Ищу платформу…' : 'Найти установленную 1С'}</button>
+          <button className="scan-button" disabled={scanBusy !== null} onClick={() => void scanBases()}><Database size={14}/>{scanBusy === 'bases' ? 'Ищу базы…' : 'Найти зарегистрированные базы'}</button>
+        </div>
+        {discovery && <div className="settings-grid compact-grid">
+          {discovery.executables.length > 0 && <label className="settings-field"><span>Найденная платформа</span>
             <select value={form.onec_exe ?? ''} onChange={event => changeField('onec_exe', event.target.value)}>
               <option value="">Не выбрано</option>
               {discovery.executables.map(exe => <option key={exe} value={exe}>{exe}</option>)}
             </select>
-          </label>
-          <label className="settings-field"><span>Основная база</span>
+          </label>}
+          {discovery.infobases.length > 0 && <label className="settings-field"><span>Основная база</span>
             <select value={form.onec_ib_connection ?? ''} onChange={event => changeField('onec_ib_connection', event.target.value)}>
               <option value="">Не выбрано</option>
               {discovery.infobases.map(base => <option key={`primary-${base.connection}`} value={base.connection}>{base.name}</option>)}
             </select>
-          </label>
-          <label className="settings-field"><span>Staging-база</span>
+          </label>}
+          {discovery.infobases.length > 1 && <label className="settings-field"><span>Staging-база</span>
             <select value={form.onec_staging_ib_connection ?? ''} onChange={event => changeField('onec_staging_ib_connection', event.target.value)}>
               <option value="">Выберите отдельную копию</option>
               {discovery.infobases.filter(base => base.connection !== form.onec_ib_connection)
                 .map(base => <option key={`staging-${base.connection}`} value={base.connection}>{base.name}</option>)}
             </select>
-          </label>
-          <label className="settings-field"><span>Workspace</span>
-            <div className="suggested-path">{form.onec_workspace ?? discovery.suggested_workspace}</div>
-          </label>
-        </div>
-        {discovery.executables.length === 0 && <small>Платформа не найдена автоматически — путь можно указать ниже вручную.</small>}
-        {discovery.infobases.length === 0 && <small>Зарегистрированные базы не найдены — подключение можно указать ниже вручную.</small>}
-      </div>}
+          </label>}
+        </div>}
+      </div>
       <div className="settings-grid"><label className="settings-field"><span>Провайдер ИИ</span><select value={form.llm_provider ?? 'gigachat'} onChange={event => changeField('llm_provider', event.target.value)}>{['gigachat','openai','deepseek','anthropic','openai_compatible'].map(provider => <option key={provider} value={provider}>{provider}</option>)}</select></label>
         {field(secretKey, form.llm_provider === 'gigachat' ? 'Authorization Key GigaChat' : 'API-ключ', '')}
         {settingFields.map(([key, title, placeholder]) => field(key, title, placeholder))}
         {form.llm_provider === 'openai_compatible' && field('openai_compatible_base_url', 'API Base URL', 'https://provider.example/v1')}
       </div>
-      <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
+      <SkillsPanel />
+            <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
         {field('gigachat_ca_bundle', 'CA-сертификат GigaChat (PEM)', 'Путь к файлу сертификата')}
         {field('onec_com_connection', 'COM connection string', 'File="C:\\1C\\dev";')}
         {field('onec_test_manager_connection', 'База Test Manager', '/F "C:\\1C\\test-manager"')}

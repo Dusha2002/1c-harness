@@ -116,6 +116,20 @@ class Workspace:
                 result[relative.as_posix()] = self.read_text(relative)
         return result
 
+    def source_count(self) -> int:
+        """Count visible BSL/XML sources without reading their contents."""
+        if not self.root.exists():
+            return 0
+        count = 0
+        for path in self.root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".xml", ".bsl"}:
+                continue
+            relative = path.relative_to(self.root)
+            if any(part.startswith(".") for part in relative.parts):
+                continue
+            count += 1
+        return count
+
     def _persistent_baseline(self) -> dict[str, str] | None:
         if not self.baseline_root.exists():
             return None

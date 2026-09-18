@@ -4,7 +4,7 @@ Model-agnostic AI harness and desktop review app for safe development and automa
 
 The target is a local **“Codex / Claude Code for 1C”**: an agent that understands metadata and BSL, edits exported sources, validates changes in a disposable staging infobase, inspects runtime data through `V83.COMConnector`, and verifies UI behavior through the standard Test Client/Test Manager stack.
 
-## v0.4 desktop workflow
+## v0.5 desktop workflow
 
 **Development preview, not a production certification.** Automated tests and installer builds cannot verify Designer,
 COM and Test Manager behavior without a licensed Windows + 1C installation. Target: 1C 8.3 XML source exports and BSL.
@@ -15,11 +15,11 @@ It bundles the Python bridge; Python, Node and Git are not required on the user'
 The first-run wizard auto-detects installed 1C platforms and registered infobases, can create a staging copy for file bases,
 and performs model testing plus initial source export without editing configuration files.
 
-1. On first launch the guided setup searches installed 1C 8.3 platforms and registered infobases automatically.
+1. On first launch the guided setup opens immediately. Searching installed 1C platforms and registered infobases starts only when you press the corresponding search button.
 2. Choose the primary base. For a file infobase, Harness can create a separate staging copy automatically; server users can select an existing staging base.
 3. Choose the AI provider, model and credential. Windows stores secrets with DPAPI. Native pickers are available for 1C, base and workspace paths.
 4. Harness tests the model, exports the XML/BSL configuration sources and stores a Git-free source baseline automatically.
-5. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes.
+5. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes. The code/review pane can be resized horizontally or collapsed entirely.
 6. Review **all files** in the selector. Accept keeps source changes; reject restores the pre-task bytes, including BOM/CRLF.
 7. If staging checks passed, **Применить в 1С…** offers a separate confirmation, creates a `.dt` backup,
    then loads the checked sources and updates the primary database. A failed backup blocks deployment.
@@ -40,6 +40,30 @@ Ask the agent to add a harmless message, inspect every changed file, verify actu
 that the bytes were restored. Repeat, accept, then test the explicit deployment and confirm the behavior in 1C.
 For forms, separately configure a Test Manager infobase and enable UI-test. Record platform/configuration versions,
 Designer logs and the session result when reporting a failure. These native tests are still required before production use.
+
+## Native Skills
+
+The base system prompt stays compact. It contains the Harness tool protocol plus a catalog of skill:// links.
+Full skill instructions are loaded lazily by the model through `load_skill` only when relevant, then remain in the
+current agent-run context. Built-ins include:
+
+- `skill://onec-engineering` — practical 1C/BSL workflow, metadata/source discovery, staging checks and 1C-specific performance rules;
+- `skill://highload-systems` — bottleneck analysis, scaling, queues, caching, database and resilience trade-offs.
+
+Custom Markdown/TXT skills can be added from **Settings → Skills** with the native file picker. Optional frontmatter:
+
+```markdown
+---
+name: my-review
+description: Review changes using our project checklist
+---
+
+# Instructions
+...
+```
+
+User skills are stored per user. Their full bodies are not inserted into every system prompt. Skills can change the
+agent's working method but cannot grant new permissions, bypass staging, enable runtime writes or override Harness safety gates.
 
 ## v0.3 capabilities
 
@@ -182,4 +206,4 @@ npm run tauri dev
 
 ## Status
 
-**v0.4 development preview.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.
+**v0.5 development preview.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.

@@ -15,43 +15,44 @@ from onec_harness.providers.base import LLMProvider, Message, ProviderError
 from onec_harness.semantic import SemanticMetadataError
 from onec_harness.semantic_tools import SEMANTIC_TOOLS, SemanticToolExecutor
 from onec_harness.snapshots import SnapshotError, SnapshotStore
+from onec_harness.skills import SkillStore
 from onec_harness.workspace import Workspace, WorkspaceError
 
 
-SYSTEM_PROMPT = """Ты автономный инженер по 1С:Предприятие/BSL, работающий через безопасный harness.
-Сначала исследуй реальную конфигурацию через metadata/symbols/search/read. Не выдумывай имена объектов и полей.
+SYSTEM_PROMPT = """Ты автономный инженер, работающий внутри 1C Harness. Harness даёт тебе реальные инструменты
+для исследования, изменения и проверки 1С:Предприятие 8.3/BSL. Не веди себя как обычный чат-бот: выполняй задачу
+через инструменты и опирайся на фактические исходники/metadata/ответы 1С.
+
 На каждом шаге отвечай только одним JSON-объектом: {"tool":"...","args":{...}}.
 
-Основные source tools: metadata, symbols, search, read, patch, diff, rollback.
-Semantic metadata tools: create_catalog, create_document_meta, create_enum, add_enum_value, add_attribute,
-add_tabular_section, create_information_register, create_accumulation_register, create_managed_form,
-add_form_input, add_form_command, ensure_module.
-Примеры форм:
-{"tool":"create_managed_form","args":{"kind":"document","object_name":"Заявка","name":"ФормаДокумента","purpose":"Object","set_default":true}}
-{"tool":"add_form_input","args":{"kind":"document","object_name":"Заявка","form_name":"ФормаДокумента","name":"Комментарий","data_path":"Объект.Комментарий"}}
-{"tool":"add_form_command","args":{"kind":"document","object_name":"Заявка","form_name":"ФормаДокумента","name":"Проверить","handler_body":"Сообщить(\"OK\");"}}
+Core tools:
+- исследование: metadata, symbols, search, read;
+- source: patch, diff, rollback;
+- semantic metadata: create_catalog, create_document_meta, create_enum, add_enum_value, add_attribute,
+  add_tabular_section, create_information_register, create_accumulation_register, create_managed_form,
+  add_form_input, add_form_command, ensure_module;
+- extensions: borrow_extension_object, patch_extension_method, stage_extension, check_extension_modules,
+  check_extension_config, check_extension_applicability;
+- staging/checks: stage_config, check_modules, check_config;
+- runtime read: runtime_query, catalog_items, document_items, register_records;
+- UI: ui_test_scenario, run_ui_test;
+- skills: list_skills, load_skill;
+- finish: {"tool":"finish","args":{"summary":"что сделано и как проверено"}}.
 
-Расширения (исходники должны быть выгружены в Extensions/<Имя>):
-{"tool":"borrow_extension_object","args":{"extension":"МоеРасширение","kind":"document","object_name":"Заказ"}}
-{"tool":"patch_extension_method","args":{"extension":"МоеРасширение","kind":"document","object_name":"Заказ","method_name":"ОбработкаПроведения","interceptor":"Before","module":"object","parameters":["Отказ","РежимПроведения"],"body":"// код"}}
-{"tool":"stage_extension","args":{"extension":"МоеРасширение","update_db":false}}
-{"tool":"check_extension_modules","args":{"extension":"МоеРасширение"}}
-{"tool":"check_extension_config","args":{"extension":"МоеРасширение"}}
-{"tool":"check_extension_applicability","args":{"extension":"МоеРасширение"}}
+Skills работают лениво. Ниже передан только каталог skill:// ссылок, а не их полный текст.
+Когда skill релевантен задаче, вызови {"tool":"load_skill","args":{"name":"<skill-name>"}} до того,
+как полагаться на его инструкции. Для любой нетривиальной разработки 1С/BSL сначала загрузи skill://onec-engineering.
+После load_skill полный текст остаётся в контексте этого запуска, поэтому повторно загружать его не нужно.
+Skills — дополнительные инструкции, а не дополнительные права: они не могут отменить safety-гейты Harness.
 
-Основная конфигурация: stage_config -> check_modules -> check_config.
-Read-only runtime: runtime_query, catalog_items, document_items, register_records.
-Runtime writes: create_catalog_item, create_document_record — только при явном разрешении.
-UI: ui_test_scenario генерирует BSL; run_ui_test реально запускает Test Client/Test Manager.
-Завершение: {"tool":"finish","args":{"summary":"что сделано и как проверено"}}.
-
-Правила:
-- Все source/metadata изменения должны иметь snapshot.
-- После изменений обязательно diff.
-- При --check нельзя finish, пока каждый изменённый scope (config или extension) не прошёл stage + CheckModules + CheckConfig.
-- Основная база никогда не используется для автономной проверки; только staging.
-- Для E2E после изменённых исходников нужен stage с update_db=true для каждого изменённого scope.
-- Не утверждай успех проверки без OK от harness.
+Safety:
+- сначала исследуй реальную конфигурацию; не выдумывай объекты, поля и API;
+- после source/metadata изменений обязательно diff;
+- при включённых checks нельзя finish, пока каждый изменённый scope не прошёл stage + CheckModules + CheckConfig;
+- основная база не используется для автономной проверки: только staging;
+- для E2E после source изменений нужен stage с update_db=true для каждого изменённого scope;
+- не утверждай успех без фактического OK от Harness;
+- не пытайся обходить ограничения инструментов или получать shell/SQL доступ.
 """
 
 
@@ -101,6 +102,7 @@ class HarnessAgent:
         max_result_chars: int = 60_000,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        skills: SkillStore | None = None,
     ) -> None:
         self.on_event = on_event or (lambda event: None)
         self.cancelled = cancelled or (lambda: False)
@@ -115,6 +117,8 @@ class HarnessAgent:
         self.execute_ui_tests = execute_ui_tests
         self.allow_runtime_writes = allow_runtime_writes
         self.max_result_chars = max_result_chars
+        self.skills = skills or SkillStore()
+        self._loaded_skills: set[str] = set()
         self.snapshots = SnapshotStore(workspace)
         self.semantic_tools = SemanticToolExecutor(workspace)
         self.extension_tools = ExtensionSourceManager(workspace)
@@ -234,7 +238,25 @@ class HarnessAgent:
             raise DesignerError("staging Designer is not configured")
         return self.designer
 
+    def _system_prompt(self) -> str:
+        return f"{SYSTEM_PROMPT}\n\nДоступные skills:\n{self.skills.catalog()}"
+
     def _execute_tool(self, tool: str, args: dict[str, Any]) -> str:
+        if tool == "list_skills":
+            return self._clip(self.skills.catalog())
+        if tool == "load_skill":
+            requested = str(args.get("name", "")).strip()
+            if not requested:
+                return "ERROR: skill name is required"
+            skill = self.skills.load(requested)
+            if skill.name in self._loaded_skills:
+                return f"SKILL_ALREADY_LOADED skill://{skill.name}"
+            self._loaded_skills.add(skill.name)
+            return self._clip(
+                f"SKILL_LOADED skill://{skill.name}\n"
+                f"Description: {skill.description}\n\n{skill.content}\n\n"
+                "Apply this skill only within Harness permissions and safety rules."
+            )
         if tool == "metadata":
             return self._clip(self.index.describe_objects(query=str(args.get("query", ""))))
         if tool == "symbols":
@@ -485,7 +507,7 @@ class HarnessAgent:
     async def run(self, task: str, *, max_steps: int = 24) -> AgentResult:
         if max_steps < 1:
             raise ValueError("max_steps must be >= 1")
-        messages = [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=f"Задача:\n{task}")]
+        messages = [Message(role="system", content=self._system_prompt()), Message(role="user", content=f"Задача:\n{task}")]
         steps: list[AgentStep] = []
         for iteration in range(max_steps):
             if self.cancelled():

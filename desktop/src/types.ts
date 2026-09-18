@@ -19,3 +19,5 @@ export interface DesktopSettings { values: Record<string, string | null>; secret
 
 export interface DiscoveredInfobase { name: string; connection: string; file_path?: string | null }
 export interface DiscoveryResult { executables: string[]; infobases: DiscoveredInfobase[]; suggested_workspace: string }
+
+export interface SkillInfo { name: string; description: string; source: 'builtin' | 'user'; path?: string | null }

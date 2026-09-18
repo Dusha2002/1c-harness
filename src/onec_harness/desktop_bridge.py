@@ -22,6 +22,7 @@ from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler
 from onec_harness.providers.base import Message
 from onec_harness.providers.factory import create_provider
+from onec_harness.skills import SkillStore
 from onec_harness.workspace import Workspace
 
 
@@ -51,6 +52,7 @@ class DesktopService:
         self.workspace = Workspace(self.settings.onec_workspace)
         self.path = self.workspace.root / '.onec-harness' / 'desktop-session.json'
         self.emit = emit_event
+        self.skills = SkillStore(config_root() / 'skills')
 
     def read_session(self) -> dict | None:
         return json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else None
@@ -67,14 +69,26 @@ class DesktopService:
                  for p in sorted(before.keys() | after.keys()) if before.get(p) != after.get(p)]
         return {k: v for k, v in session.items() if k not in {'before', 'after'}} | {'files': files}
 
-    def discover(self) -> dict:
-        executables = discover_onec_executables()
-        infobases = discover_infobases()
-        suggested_workspace = str((config_root() / "workspace").resolve())
+    def discovery_defaults(self) -> dict:
+        return {"suggested_workspace": str((config_root() / "workspace").resolve())}
+
+    def discover_platforms(self) -> dict:
         return {
-            "executables": executables,
-            "infobases": infobases,
-            "suggested_workspace": suggested_workspace,
+            "executables": discover_onec_executables(),
+            **self.discovery_defaults(),
+        }
+
+    def discover_bases(self) -> dict:
+        return {
+            "infobases": discover_infobases(),
+            **self.discovery_defaults(),
+        }
+
+    def discover(self) -> dict:
+        """Compatibility aggregate; desktop UI intentionally uses explicit scans."""
+        return {
+            **self.discover_platforms(),
+            **self.discover_bases(),
         }
 
     def prepare_staging(self, target: str | None = None) -> dict:
@@ -104,6 +118,16 @@ class DesktopService:
         write_config({'onec_staging_ib_connection': connection})
         return {'connection': connection, 'path': str(target_path)}
 
+    def skill_list(self) -> list[dict[str, Any]]:
+        return [asdict(item) for item in self.skills.list()]
+
+    def import_skill(self, path: str) -> dict[str, Any]:
+        return asdict(self.skills.import_file(path))
+
+    def delete_skill(self, name: str) -> list[dict[str, Any]]:
+        self.skills.delete(name)
+        return self.skill_list()
+
     def doctor(self) -> dict:
         s = self.settings
         credentials = bool(s.gigachat_credentials if s.provider_name == 'gigachat' else
@@ -120,13 +144,13 @@ class DesktopService:
                 require_test_connection(s.onec_ib_connection, s.onec_staging_ib_connection)
             except ValueError as exc:
                 errors.append(str(exc))
-        sources = self.workspace.source_texts() if self.workspace.root.exists() else {}
+        source_count = self.workspace.source_count()
         exe_ok = bool(s.onec_exe and s.onec_exe.is_file())
         return {'llm_provider': s.llm_provider, 'llm_model': s.llm_model, 'llm_credentials': credentials,
                 'onec_exe': str(s.onec_exe) if s.onec_exe else None, 'exe_exists': exe_ok,
                 'onec_connection': bool(s.onec_ib_connection), 'staging_connection': bool(s.onec_staging_ib_connection),
-                'workspace': str(self.workspace.root), 'source_count': len(sources), 'errors': errors,
-                'can_run': bool(credentials and sources and not errors),
+                'workspace': str(self.workspace.root), 'source_count': source_count, 'errors': errors,
+                'can_run': bool(credentials and source_count and not errors),
                 'can_check': bool(exe_ok and s.onec_staging_ib_connection and not errors),
                 'e2e_ui_testing': bool(exe_ok and s.onec_staging_ib_connection and s.onec_test_manager_connection),
                 'com_configured': ComConnector(s).configured, 'runtime_writes': False,
@@ -173,7 +197,7 @@ class DesktopService:
             runtime=ComConnector(s), scenario_compiler=ScenarioCompiler(s.onec_test_host, s.onec_test_port),
             test_runner=TestManagerRunner(s, self.workspace) if request.get('ui_test') and check else None,
             execute_ui_tests=bool(request.get('ui_test') and check),
-            on_event=progress, cancelled=cancel_path.exists,
+            on_event=progress, cancelled=cancel_path.exists, skills=self.skills,
         )
         context = ''
         if previous and previous['review_state'] == 'accepted':
@@ -273,6 +297,18 @@ class DesktopService:
             return self.doctor()
         if op == 'discover':
             return self.discover()
+        if op == 'discovery_defaults':
+            return self.discovery_defaults()
+        if op == 'discover_platforms':
+            return self.discover_platforms()
+        if op == 'discover_bases':
+            return self.discover_bases()
+        if op == 'skills':
+            return self.skill_list()
+        if op == 'import_skill':
+            return self.import_skill(str(request.get('path', '')))
+        if op == 'delete_skill':
+            return self.delete_skill(str(request.get('name', '')))
         if op == 'prepare_staging':
             return self.prepare_staging(request.get('target'))
         if op == 'session':
@@ -299,32 +335,53 @@ class DesktopService:
         raise ValueError('Unknown desktop operation')
 
 
-def main() -> None:
+def handle_request(request: dict) -> None:
+    if request.get('op') == 'cancel':
+        config_root().mkdir(parents=True, exist_ok=True)
+        (config_root() / 'cancel').touch()
+        emit({'type': 'result', 'data': {'message': 'Остановка после текущего вызова'}})
+        return
+
+    config_root().mkdir(parents=True, exist_ok=True)
+    with (config_root() / 'desktop.lock').open('a+b') as lock:
+        if os.name == 'nt':
+            import msvcrt
+            lock.seek(0)
+            lock.write(b'0')
+            lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = asyncio.run(DesktopService().dispatch(request))
+        emit({'type': 'result', 'data': data})
+
+
+def _configure_stdio() -> None:
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stdin.reconfigure(encoding='utf-8')
+
+
+def main() -> None:
+    _configure_stdio()
+    server_mode = '--server' in sys.argv
+    if server_mode:
+        for raw in sys.stdin:
+            if not raw.strip():
+                continue
+            try:
+                handle_request(json.loads(raw))
+            except Exception as exc:
+                emit({'type': 'error', 'message': str(exc)})
+        return
+
     try:
-        request = json.loads(sys.stdin.readline())
-        if request.get('op') == 'cancel':
-            config_root().mkdir(parents=True, exist_ok=True)
-            (config_root() / 'cancel').touch()
-            emit({'type': 'result', 'data': {'message': 'Остановка после текущего вызова'}})
-            return
-        # OS lock releases even after a crash. Never run two writers concurrently.
-        config_root().mkdir(parents=True, exist_ok=True)
-        with (config_root() / 'desktop.lock').open('a+b') as lock:
-            if os.name == 'nt':
-                import msvcrt
-                lock.seek(0)
-                lock.write(b'0')
-                lock.flush()
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            data = asyncio.run(DesktopService().dispatch(request))
-            emit({'type': 'result', 'data': data})
+        raw = sys.stdin.readline()
+        if not raw:
+            raise ValueError('Desktop bridge received no request')
+        handle_request(json.loads(raw))
     except Exception as exc:
         emit({'type': 'error', 'message': str(exc)})
         sys.exit(1)

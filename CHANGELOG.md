@@ -1,3 +1,17 @@
+# v0.5 development preview
+
+- Kept the packaged desktop bridge warm between ordinary UI actions, removing repeated PyInstaller startup latency.
+- Made workspace status lightweight by counting source files without reading every BSL/XML file.
+- Split 1C discovery into explicit user-triggered platform and registered-infobase scans.
+- Added IDE-style horizontally resizable and collapsible code/review panel with Monaco auto-layout.
+
+- Replaced the oversized agent prompt with a compact Harness protocol plus lazy skill:// catalog.
+- Added built-in onec-engineering and highload-systems skills.
+- Added list_skills/load_skill agent tools; full skill bodies enter context only on demand.
+- Added per-user Markdown/TXT skill import, deletion and native desktop management UI.
+- Skills cannot expand permissions or bypass staging/safety gates.
+- Bumped desktop/core version to 0.5.0.
+
 # v0.4 development preview
 
 - Added guided first-run setup with installed-platform and registered-infobase discovery.
