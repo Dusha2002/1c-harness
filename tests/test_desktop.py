@@ -8,6 +8,7 @@ from onec_harness.agent import HarnessAgent
 from onec_harness.connections import require_test_connection
 from onec_harness.desktop_bridge import DesktopService
 from onec_harness.desktop_config import load_settings, public_config, write_config
+from onec_harness.discovery import discover_infobases, discover_onec_executables, parse_ibases
 from onec_harness.providers.base import LLMResponse, ProviderError
 from onec_harness.workspace import Workspace
 
@@ -190,3 +191,33 @@ def test_unchanged_crlf_files_do_not_pollute_agent_diff(service, monkeypatch):
     diff = next(step['result'] for step in result['steps'] if step['tool'] == 'diff')
     assert 'Unchanged.bsl' not in diff
     assert len(result['files']) == 1
+
+
+def test_parse_registered_infobases_supports_file_and_server() -> None:
+    entries = parse_ibases(
+        '\ufeff[Demo]\nConnect=File="C:\\Bases\\Demo";\n'
+        '[ERP]\nConnect=Srvr="srv01";Ref="ERP";\n'
+    )
+    assert entries == [
+        {'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"'},
+        {'name': 'ERP', 'connection': '/S "srv01\\ERP"'},
+    ]
+
+
+def test_discovery_finds_platform_and_registered_base(tmp_path, monkeypatch) -> None:
+    program_files = tmp_path / 'Program Files'
+    exe = program_files / '1cv8' / '8.3.25.1000' / 'bin' / '1cv8.exe'
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b'')
+
+    appdata = tmp_path / 'AppData' / 'Roaming'
+    registry = appdata / '1C' / '1CEStart' / 'ibases.v8i'
+    registry.parent.mkdir(parents=True)
+    registry.write_text('[Demo]\nConnect=File="C:\\Bases\\Demo";\n', encoding='utf-8')
+
+    monkeypatch.setenv('ProgramFiles', str(program_files))
+    monkeypatch.delenv('ProgramFiles(x86)', raising=False)
+    monkeypatch.setenv('APPDATA', str(appdata))
+
+    assert discover_onec_executables() == [str(exe.resolve())]
+    assert discover_infobases() == [{'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"'}]
