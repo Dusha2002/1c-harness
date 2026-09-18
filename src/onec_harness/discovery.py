@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def discover_onec_executables() -> list[str]:
