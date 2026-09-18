@@ -16,3 +16,6 @@ export interface HarnessDoctor {
   can_run: boolean; can_check: boolean; errors: string[];
 }
 export interface DesktopSettings { values: Record<string, string | null>; secrets: Record<string, boolean> }
+
+export interface DiscoveredInfobase { name: string; connection: string }
+export interface DiscoveryResult { executables: string[]; infobases: DiscoveredInfobase[]; suggested_workspace: string }
