@@ -1,5 +1,9 @@
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -321,3 +325,31 @@ def test_doctor_counts_sources_without_reading_contents(service, monkeypatch) ->
     status = service.doctor()
 
     assert status['source_count'] >= 1
+
+
+def test_bridge_server_handles_multiple_requests_without_restart(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env['ONEC_HARNESS_CONFIG_DIR'] = str(tmp_path / 'config')
+    root = Path(__file__).resolve().parents[1]
+    env['PYTHONPATH'] = str(root / 'src') + os.pathsep + env.get('PYTHONPATH', '')
+
+    process = subprocess.Popen(
+        [sys.executable, '-m', 'onec_harness.desktop_bridge', '--server'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+        env=env,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    try:
+        for request_data in ({'op': 'settings'}, {'op': 'discovery_defaults'}):
+            process.stdin.write(json.dumps(request_data) + '\n')
+            process.stdin.flush()
+            event = json.loads(process.stdout.readline())
+            assert event['type'] == 'result'
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
