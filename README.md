@@ -12,6 +12,8 @@ COM and Test Manager behavior without a licensed Windows + 1C installation. Targ
 
 Download the installer artifact from the latest successful **Windows desktop** run under GitHub Actions.
 It bundles the Python bridge; Python, Node and Git are not required on the user's computer.
+The first-run wizard auto-detects installed 1C platforms and registered infobases, can create a staging copy for file bases,
+and performs model testing plus initial source export without editing configuration files.
 
 1. Open **Подключение и модель**, choose the provider, enter its model ID and key.
 2. Enter the 1cv8.exe path, primary development infobase, a separate staging copy and an absolute source folder.
