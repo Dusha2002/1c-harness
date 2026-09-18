@@ -179,3 +179,14 @@ def test_requested_ui_test_cannot_silently_finish(service):
     agent._source_changed = True
     agent._diff_seen = True
     assert 'run_ui_test' in agent._finish_block_reason()
+
+
+def test_unchanged_crlf_files_do_not_pollute_agent_diff(service, monkeypatch):
+    (service.workspace.root / 'Unchanged.bsl').write_bytes(b'unchanged\r\n')
+    provider = ScriptedProvider([action('patch', path='Модуль.bsl', old='старое', new='новое'),
+                                 action('diff'), action('finish')])
+    monkeypatch.setattr(desktop_bridge, 'create_provider', lambda settings: provider)
+    result = asyncio.run(service.run({'task': 'Измени', 'check': False}))
+    diff = next(step['result'] for step in result['steps'] if step['tool'] == 'diff')
+    assert 'Unchanged.bsl' not in diff
+    assert len(result['files']) == 1

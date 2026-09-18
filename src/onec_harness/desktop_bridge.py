@@ -110,7 +110,8 @@ class DesktopService:
         s = self.settings
         provider = create_provider(s)
         before = source_bytes(self.workspace)
-        self.workspace.baseline = {p: decode(v) for p, v in before.items()}
+        self.workspace.baseline = {p: decode(v).replace("\r\n", "\n").replace("\r", "\n")
+                                   for p, v in before.items()}
         session: dict[str, Any] = {'id': uuid.uuid4().hex, 'task': task, 'before': before,
                                   'review_state': 'pending', 'status': 'interrupted', 'steps': [],
                                   'summary': 'Процесс прерван. Проверьте изменения или отклоните их.',
