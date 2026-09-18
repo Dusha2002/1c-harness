@@ -110,7 +110,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       setBusy(false);
 
       const firstRunKey = 'onec-harness:first-discovery-v2';
-      if (!localStorage.getItem(firstRunKey)) {
+      if (localStorage.getItem(firstRunKey) !== 'done') {
         localStorage.setItem(firstRunKey, 'running');
         await scanPlatforms(next.onec_exe);
         if (active) await scanBases(next.onec_ib_connection);
