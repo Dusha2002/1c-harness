@@ -18,9 +18,9 @@ const providerLabels: Record<string, string> = {
 
 const providerModels: Record<string, string> = {
   gigachat: 'GigaChat-3-Ultra',
-  openai: 'gpt-5.6',
-  deepseek: 'deepseek-chat',
-  anthropic: 'claude-sonnet-4-5',
+  openai: '',
+  deepseek: '',
+  anthropic: '',
   openai_compatible: '',
 };
 
