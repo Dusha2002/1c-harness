@@ -130,7 +130,11 @@ class Workspace:
         return result.returncode == 0 and result.stdout.strip().lower() == "true"
 
     def changed_paths(self) -> list[str]:
-        baseline = self.baseline if self.baseline is not None else (None if self._git_available() else self._persistent_baseline())
+        baseline = (
+            self.baseline
+            if self.baseline is not None
+            else (None if self._git_available() else self._persistent_baseline())
+        )
         if baseline is not None:
             current = self.source_texts()
             return sorted(p for p in baseline.keys() | current.keys() if baseline.get(p) != current.get(p))
