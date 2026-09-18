@@ -6,6 +6,6 @@ export async function request<T>(op: string, args: Record<string, unknown> = {},
   return invoke<T>('desktop_request', { request: { op, ...args }, onEvent });
 }
 
-export async function pickPath(kind: 'exe' | 'folder'): Promise<string | null> {
+export async function pickPath(kind: 'exe' | 'folder' | 'skill'): Promise<string | null> {
   return invoke<string | null>('pick_path', { kind });
 }
