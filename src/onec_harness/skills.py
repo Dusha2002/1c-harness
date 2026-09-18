@@ -222,12 +222,13 @@ class SkillStore:
 
     def delete(self, name: str) -> None:
         name = _validate_name(name.removeprefix("skill://"))
+        path = self._user_path(name)
+        if path.exists():
+            path.unlink()
+            return
         if name in BUILTIN_SKILLS:
             raise ValueError("Built-in skills cannot be deleted")
-        path = self._user_path(name)
-        if not path.exists():
-            raise ValueError(f"Skill not found: {name}")
-        path.unlink()
+        raise ValueError(f"Skill not found: {name}")
 
     def _read_user(self, path: Path) -> Skill:
         if path.stat().st_size > MAX_SKILL_BYTES:
