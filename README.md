@@ -15,13 +15,13 @@ It bundles the Python bridge; Python, Node and Git are not required on the user'
 The first-run wizard auto-detects installed 1C platforms and registered infobases, can create a staging copy for file bases,
 and performs model testing plus initial source export without editing configuration files.
 
-1. Open **Подключение и модель**, choose the provider, enter its model ID and key.
-2. Enter the 1cv8.exe path, primary development infobase, a separate staging copy and an absolute source folder.
-   Connections use `/F "C:\1C\dev"` or `/S "server\base"`. Enter credentials in separate fields.
-3. Save, then **Проверить модель**. Select existing XML/BSL exports, or use **Выгрузить из 1С** into an empty folder.
-4. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes.
-5. Review **all files** in the selector. Accept keeps source changes; reject restores the pre-task bytes, including BOM/CRLF.
-6. If staging checks passed, **Применить в 1С…** offers a separate confirmation, creates a `.dt` backup,
+1. On first launch the guided setup searches installed 1C 8.3 platforms and registered infobases automatically.
+2. Choose the primary base. For a file infobase, Harness can create a separate staging copy automatically; server users can select an existing staging base.
+3. Choose the AI provider, model and credential. Windows stores secrets with DPAPI. Native pickers are available for 1C, base and workspace paths.
+4. Harness tests the model, exports the XML/BSL configuration sources and stores a Git-free source baseline automatically.
+5. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes.
+6. Review **all files** in the selector. Accept keeps source changes; reject restores the pre-task bytes, including BOM/CRLF.
+7. If staging checks passed, **Применить в 1С…** offers a separate confirmation, creates a `.dt` backup,
    then loads the checked sources and updates the primary database. A failed backup blocks deployment.
 
 A new task is blocked until pending review is resolved. Interrupted/failed sessions remain reviewable after restart.
