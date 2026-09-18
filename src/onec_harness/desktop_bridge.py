@@ -80,7 +80,10 @@ class DesktopService:
     def prepare_staging(self, target: str | None = None) -> dict:
         source_value = file_connection_path(self.settings.onec_ib_connection)
         if not source_value:
-            raise ValueError('Автоматическая staging-копия доступна для файловых баз /F. Для серверной базы выберите отдельную staging-базу.')
+            raise ValueError(
+                'Автоматическая staging-копия доступна для файловых баз /F. '
+                'Для серверной базы выберите отдельную staging-базу.'
+            )
         source = Path(source_value)
         if not source.is_dir():
             raise ValueError(f'Папка основной файловой базы не найдена: {source}')
