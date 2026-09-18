@@ -59,3 +59,14 @@ def test_builtin_skill_cannot_be_deleted(tmp_path: Path) -> None:
     store = SkillStore(tmp_path / "skills")
     with pytest.raises(ValueError, match="Built-in"):
         store.delete("highload-systems")
+
+
+def test_import_without_frontmatter_slugifies_filename(tmp_path: Path) -> None:
+    source = tmp_path / "High Load Review.md"
+    source.write_text("# Review\nПроверяй нагрузку.\n", encoding="utf-8")
+    store = SkillStore(tmp_path / "skills")
+
+    info = store.import_file(source)
+
+    assert info.name == "High-Load-Review"
+    assert "Проверяй нагрузку" in store.load(info.name).content
