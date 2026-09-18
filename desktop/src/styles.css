@@ -103,9 +103,10 @@ button { border: 0; }
 .workspace-layout {
   height: calc(100% - 64px);
   display: grid;
-  grid-template-columns: minmax(430px, 44%) 1fr;
   background: #f8f9fb;
+  overflow: hidden;
 }
+.workspace-layout.review-collapsed { grid-template-columns: 1fr 0 0 !important; }
 
 .conversation-pane {
   min-width: 0;
@@ -209,6 +210,24 @@ button { border: 0; }
 .send-button:disabled { background: #d6dbde; cursor: default; }
 
 .review-pane { min-width: 0; display: grid; grid-template-rows: 58px 38px 1fr 58px; background: #fff; }
+.review-pane.hidden { display: none; }
+.review-resizer {
+  position: relative;
+  z-index: 4;
+  cursor: col-resize;
+  background: #eef0f2;
+  transition: background .12s ease;
+  touch-action: none;
+}
+.review-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+.review-resizer:hover,
+.review-resizer:active { background: #9bcab7; }
+.review-header-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.icon-button.compact { width: 28px; height: 28px; border-radius: 7px; flex: 0 0 auto; }
 .review-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--border); }
 .file-tab { gap: 9px; min-width: 0; color: #69727c; }
 .file-tab > div { display: grid; gap: 2px; min-width: 0; }
@@ -243,7 +262,6 @@ button { border: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1180px) {
-  .workspace-layout { grid-template-columns: 420px 1fr; }
   .brand-name { display: none; }
   .session-title { display: none; }
   .topbar { grid-template-columns: 1fr 1fr; }
@@ -394,3 +412,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .skills-note { margin-top: 10px; color: #929b96; font-size: 9px; line-height: 1.5; }
 .skills-note code { padding: 1px 4px; border-radius: 4px; background: #eef1ef; color: #67736c; }
 .skill-notice { margin-top: 9px; padding: 8px 9px; border-radius: 8px; background: #f3f6f4; color: #647169; font-size: 10px; }
+
+.discovery-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.discovery-title-row > span { color: #9aa3a0; font-size: 9px; }
+.discovery-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.scan-button, .setup-scan-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid #dce4e0;
+  border-radius: 9px;
+  background: #f7faf8;
+  color: #496b5c;
+  cursor: pointer;
+  font-size: 10px;
+}
+.scan-button:hover, .setup-scan-button:hover { background: #eef7f2; border-color: #bdd8ca; color: #2e7659; }
+.scan-button:disabled, .setup-scan-button:disabled { opacity: .55; cursor: default; }
+.setup-scan-button { justify-self: start; }
