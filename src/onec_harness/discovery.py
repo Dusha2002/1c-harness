@@ -79,7 +79,7 @@ def parse_ibases(text: str) -> list[dict[str, str]]:
             continue
         connection = connection_from_registration(value.strip())
         if connection:
-            result.append({"name": current_name or connection, "connection": connection})
+            result.append({"name": current_name or connection, "connection": connection, "file_path": file_connection_path(connection)})
     return result
 
 
