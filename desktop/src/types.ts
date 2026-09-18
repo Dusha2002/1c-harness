@@ -17,5 +17,5 @@ export interface HarnessDoctor {
 }
 export interface DesktopSettings { values: Record<string, string | null>; secrets: Record<string, boolean> }
 
-export interface DiscoveredInfobase { name: string; connection: string }
+export interface DiscoveredInfobase { name: string; connection: string; file_path?: string | null }
 export interface DiscoveryResult { executables: string[]; infobases: DiscoveredInfobase[]; suggested_workspace: string }
