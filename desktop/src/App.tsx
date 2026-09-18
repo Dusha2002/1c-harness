@@ -70,10 +70,10 @@ export default function App() {
   const file = session?.files[active];
 
   async function refresh() {
-    const status = await request<HarnessDoctor>('doctor');
-    setDoctor(status);
-    setSession(await request<Session | null>('session'));
-    return status;
+    const state = await request<{doctor: HarnessDoctor; session: Session | null}>('bootstrap');
+    setDoctor(state.doctor);
+    setSession(state.session);
+    return state.doctor;
   }
   useEffect(() => {
     refresh()
