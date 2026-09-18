@@ -151,7 +151,7 @@ export default function App() {
       <div className="session-title">{doctor?.llm_model ?? 'Новая сессия'}</div>
       <div className="top-actions">
         <button className="connect-button" disabled={busy || pending} onClick={() => void openSettings()}><span className="onec-badge">1C</span>Подключение и модель</button>
-        <button className="icon-button" aria-label="Обновить состояние" disabled={busy} onClick={() => void action(refresh)}><RefreshCw size={17}/></button>
+        <button className="icon-button" aria-label="Обновить состояние" disabled={busy} onClick={() => void action(async () => { await refresh(); })}><RefreshCw size={17}/></button>
         <button className="icon-button" aria-label="Настройки" disabled={busy || pending} onClick={() => void openSettings()}><Settings size={18}/></button>
       </div>
     </header>
