@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from onec_harness.settings import Settings
+from onec_harness.connections import require_test_connection
 from onec_harness.workspace import Workspace
 
 
@@ -55,6 +56,10 @@ class TestClientLauncher:
         connection = self.settings.onec_test_client_connection.strip() or self.settings.onec_staging_ib_connection.strip()
         if not connection:
             raise TestClientError("Configure ONEC_TEST_CLIENT_CONNECTION or ONEC_STAGING_IB_CONNECTION")
+        try:
+            require_test_connection(self.settings.onec_ib_connection, connection)
+        except ValueError as exc:
+            raise TestClientError(str(exc)) from exc
         command = self._enterprise_command(connection, self.settings.onec_user, self.settings.onec_password)
         command.extend(["/TestClient", f"-TPort{self.settings.onec_test_port}"])
         if self.settings.onec_test_client_id:

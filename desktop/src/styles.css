@@ -248,3 +248,31 @@ button { border: 0; }
   .session-title { display: none; }
   .topbar { grid-template-columns: 1fr 1fr; }
 }
+input, select { font: inherit; }
+button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #24936b; outline-offset: 3px; }
+.welcome h2 { font-size: 24px; font-weight: 550; line-height: 1.35; color: #303b37; margin: 4px 0 18px; }
+.welcome p { color: #7b8490; font-size: 14px; line-height: 1.8; margin-bottom: 24px; }
+.empty-review { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #a1aaa7; }
+.empty-review h3 { font-size: 16px; font-weight: 500; color: #68766f; margin: 22px 0 0; }
+.empty-review p { text-align: center; font-size: 13px; line-height: 1.7; }
+.review-header select { max-width: 76%; border: 1px solid var(--border); background: #fff; border-radius: 7px; padding: 7px; font-size: 12px; }
+.workspace-path { margin: 0 8px 10px; font-size: 11px; color: #929b96; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-details summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5c6863; }
+.step-details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 11px; color: #6a7470; }
+.live-step { display: flex; gap: 8px; color: var(--green); font-size: 12px; }
+.preserve-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
+.modal-backdrop { position: fixed; inset: 0; background: #182b2440; z-index: 50; display: grid; place-items: center; padding: 30px; }
+.settings-panel { width: min(820px, 95vw); max-height: 92vh; overflow: auto; background: white; border-radius: 18px; padding: 26px 30px; box-shadow: 0 24px 100px #16271e30; }
+.settings-heading { display: flex; justify-content: space-between; align-items: center; }
+.settings-heading h2 { margin: 0; font-size: 23px; font-weight: 550; }
+.settings-intro { font-size: 13px; color: #7b8490; line-height: 1.7; }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 22px 0; }
+.settings-field { display: flex; flex-direction: column; gap: 7px; color: #68736c; font-size: 12px; }
+.settings-field input, .settings-field select { border: 1px solid #dee5e0; border-radius: 7px; padding: 10px 11px; width: 100%; min-width: 0; color: #34463b; background: #fcfdfc; }
+.settings-field input::placeholder { color: #a3aca6; font-size: 11px; }
+.clear-secret { align-self: start; color: #9f6161; background: transparent; font-size: 10px; cursor: pointer; padding: 0; }
+.advanced-settings summary { font-size: 12px; color: #63776a; cursor: pointer; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.settings-note { display: block; font-size: 10px; color: #97a099; margin-top: 15px; }
+.connection-report { margin-top: 16px; font-size: 12px; line-height: 1.7; color: #667e6f; }

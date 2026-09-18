@@ -1,30 +1,8 @@
-import { DiffEditor, type BeforeMount } from "@monaco-editor/react";
-import {
-  Bot,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  Circle,
-  Code2,
-  Database,
-  FileCode2,
-  Menu,
-  MessageSquareText,
-  Paperclip,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  Send,
-  Settings,
-  ShieldCheck,
-  TestTube2,
-  X,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-
-import { demoPatch, demoSteps } from "./mock";
-import type { AgentResult, AgentStep, HarnessDoctor, PatchPreview, StepStatus } from "./types";
-
+import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
+import { Bot, Check, Code2, Database, FileCode2, RefreshCw, Send, Settings, Square, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { request, type Progress } from './lib/harness';
+import type { DesktopSettings, HarnessDoctor, Session } from './types';
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
   monaco.languages.register({ id: "bsl" });
@@ -47,332 +25,198 @@ const registerBsl: BeforeMount = (monaco) => {
   });
 };
 
-function statusIcon(status: StepStatus) {
-  if (status === "done") return <Check size={13} strokeWidth={3} />;
-  if (status === "running") return <RefreshCw size={13} className="spin" />;
-  if (status === "failed") return <X size={13} strokeWidth={3} />;
-  return <Circle size={10} />;
-}
 
-function toolLabel(tool: string): string {
-  const labels: Record<string, string> = {
-    metadata: "Изучены метаданные 1С",
-    symbols: "Найдены BSL-процедуры и функции",
-    search: "Найдены релевантные фрагменты кода",
-    read: "Код модуля прочитан",
-    patch: "Подготовлена точечная правка",
-    create_catalog: "Создан справочник в метаданных",
-    create_document_meta: "Создан документ в метаданных",
-    create_enum: "Создано перечисление",
-    add_enum_value: "Добавлено значение перечисления",
-    add_attribute: "Добавлен реквизит метаданных",
-    add_tabular_section: "Добавлена табличная часть",
-    ensure_module: "Создан модуль объекта",
-    diff: "Diff проверен агентом",
-    stage_config: "Изменения загружены в staging 1С",
-    check_modules: "CheckModules выполнен",
-    check_config: "CheckConfig выполнен",
-    runtime_query: "Выполнен read-only запрос к 1С",
-    catalog_items: "Прочитаны элементы справочника",
-    document_items: "Прочитаны документы",
-    register_records: "Прочитаны записи регистра",
-    create_catalog_item: "Создан элемент в runtime 1С",
-    create_document_record: "Создан документ в runtime 1С",
-    ui_test_scenario: "Подготовлен сценарий Test Manager",
-    run_ui_test: "Выполнен E2E Test Client/Test Manager",
-    rollback: "Правка откатана из snapshot",
-  };
-  return labels[tool] ?? tool;
-}
-
-function languageFor(path: string): PatchPreview["language"] {
-  if (path.toLowerCase().endsWith(".bsl")) return "bsl";
-  if (path.toLowerCase().endsWith(".xml")) return "xml";
-  return "text";
-}
-
-function previewFromResult(result: AgentResult): PatchPreview | null {
-  const patch = [...result.steps].reverse().find((step) => step.tool === "patch");
-  if (patch) {
-    const path = typeof patch.args.path === "string" ? patch.args.path : "Изменённый модуль.bsl";
-    return {
-      id: `live-${Date.now()}`,
-      file: path,
-      language: languageFor(path),
-      original: typeof patch.args.old === "string" ? patch.args.old : "",
-      modified: typeof patch.args.new === "string" ? patch.args.new : patch.result,
-      snapshotId: result.snapshots.at(-1),
-    };
-  }
-  const diff = [...result.steps].reverse().find((step) => step.tool === "diff");
-  if (diff && diff.result && diff.result !== "No changes") {
-    const match = /^\+\+\+\s+b\/(.+)$/m.exec(diff.result);
-    const path = match?.[1] ?? "workspace.diff";
-    return {
-      id: `live-${Date.now()}`,
-      file: path,
-      language: match ? languageFor(path) : "text",
-      original: "",
-      modified: diff.result,
-      snapshotId: result.snapshots.at(-1),
-    };
-  }
-  return null;
-}
+const labels: Record<string, string> = {
+  read: 'Чтение модуля', search: 'Поиск по исходникам', metadata: 'Изучение метаданных',
+  symbols: 'Поиск процедур и функций', patch: 'Изменение кода', diff: 'Просмотр изменений',
+  stage_config: 'Загрузка в тестовую базу', check_modules: 'Проверка модулей 1С', check_config: 'Проверка конфигурации',
+  run_ui_test: 'Тест интерфейса 1С', runtime_query: 'Запрос к 1С', rollback: 'Восстановление исходников',
+};
+const settingFields = [
+  ['llm_model', 'Модель', 'Например, GigaChat-3-Ultra'],
+  ['onec_exe', 'Исполняемый файл 1С', 'C:\\Program Files\\1cv8\\8.3.xx.xxxx\\bin\\1cv8.exe'],
+  ['onec_workspace', 'Папка исходников', 'C:\\1C-Harness\\my-project'],
+  ['onec_ib_connection', 'Основная база', '/F "C:\\1C\\dev" или /S "server\\base"'],
+  ['onec_staging_ib_connection', 'Отдельная тестовая база', '/F "C:\\1C\\staging"'],
+  ['onec_user', 'Пользователь 1С', 'Имя пользователя'],
+  ['onec_password', 'Пароль 1С', ''],
+];
 
 export default function App() {
-  const [connected, setConnected] = useState(false);
   const [doctor, setDoctor] = useState<HarnessDoctor | null>(null);
-  const [steps, setSteps] = useState<AgentStep[]>(demoSteps);
-  const [task, setTask] = useState("");
-  const [lastTask, setLastTask] = useState(
-    "Проверь проведение документа ЗаказПокупателя и не позволяй проводить его при недостаточном остатке товара.",
-  );
+  const [session, setSession] = useState<Session | null>(null);
+  const [active, setActive] = useState(0);
+  const [task, setTask] = useState('');
+  const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
-  const [patchState, setPatchState] = useState<"pending" | "accepted" | "rejected">("pending");
-  const [notice, setNotice] = useState<string | null>(null);
-  const [activePatch, setActivePatch] = useState<PatchPreview>(demoPatch);
-  const [snapshots, setSnapshots] = useState<string[]>([]);
-  const [checksOk, setChecksOk] = useState<boolean | null>(true);
-  const [uiTestOk, setUiTestOk] = useState<boolean | null>(null);
+  const [notice, setNotice] = useState('');
+  const [events, setEvents] = useState<Progress[]>([]);
+  const [currentTool, setCurrentTool] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<DesktopSettings | null>(null);
+  const [form, setForm] = useState<Record<string, string | null>>({});
+  const [check, setCheck] = useState(true);
+  const [uiTest, setUiTest] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const pending = session?.review_state === 'pending';
+  const file = session?.files[active];
 
-  const completed = useMemo(() => steps.filter((step) => step.status === "done").length, [steps]);
+  async function refresh() {
+    const status = await request<HarnessDoctor>('doctor');
+    setDoctor(status);
+    setSession(await request<Session | null>('session'));
+  }
+  useEffect(() => {
+    refresh().catch(error => setNotice(`Не удалось связаться с приложением: ${String(error)}`));
+  }, []);
 
-  async function connectHarness() {
-    setNotice(null);
-    try {
-      const { getDoctor } = await import("./lib/harness");
-      const result = await getDoctor();
-      setDoctor(result);
-      setConnected(Boolean(result.onec_exe && result.onec_connection));
-      const capabilities = [
-        result.staging_connection ? "staging" : null,
-        result.com_configured ? "COM" : null,
-        result.test_client_connection ? "Test Client" : null,
-        result.test_manager_connection ? "Test Manager" : null,
-        result.e2e_ui_testing ? "E2E ready" : null,
-      ].filter(Boolean).join(" · ");
-      if (!result.onec_exe || !result.onec_connection) {
-        setNotice("Harness найден, но путь к 1С или основная инфобаза ещё не настроены.");
-      } else {
-        setNotice(capabilities ? `1С подключена. Доступно: ${capabilities}.` : "1С подключена.");
+  async function action(work: () => Promise<void>) {
+    setBusy(true); setNotice('');
+    try { await work(); } catch (error) { setNotice(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function openSettings() {
+    await action(async () => {
+      const result = await request<DesktopSettings>('settings');
+      setSettings(result); setForm(result.values); setSettingsOpen(true);
+    });
+  }
+
+  async function saveSettings() {
+    await action(async () => {
+      const result = await request<DesktopSettings>('save_settings', { values: form });
+      setSettings(result); setForm(result.values);
+      await refresh();
+      setNotice('Настройки сохранены. Можно проверить модель и выгрузить исходники.');
+    });
+  }
+
+  async function run() {
+    if (!task.trim() || busy || pending) return;
+    const prompt = task.trim();
+    setRunning(true); setEvents([]); setCurrentTool('Подключение к модели');
+    await action(async () => {
+      try {
+        const result = await request<Session>('run', { task: prompt, check, ui_test: uiTest }, event => {
+          if (event.type === 'thinking') setCurrentTool(`Модель обдумывает шаг ${event.iteration}`);
+          if (event.type === 'tool_start') setCurrentTool(labels[event.tool ?? ''] ?? event.tool ?? '');
+          if (event.type === 'tool_end') setEvents(items => [...items, event]);
+        });
+        setSession(result); setActive(0); setTask('');
+      } catch (error) {
+        // Recover the durable session even if the desktop transport failed.
+        await refresh();
+        throw error;
       }
-    } catch {
-      setConnected(false);
-      setNotice("UI запущен в demo-режиме. Запусти через Tauri, чтобы подключить локальный harness.");
-    }
+    });
+    setCurrentTool(''); setRunning(false);
   }
 
-  async function submitTask() {
-    const trimmed = task.trim();
-    if (!trimmed || running) return;
-    setRunning(true);
-    setNotice(null);
-    setLastTask(trimmed);
-    setPatchState("pending");
-    setUiTestOk(null);
-    setSteps([{ id: "live-1", label: "Агент анализирует задачу", status: "running" }]);
+  const steps = running ? events : session?.steps ?? [];
+  const changeField = (key: string, value: string) => setForm(current => ({ ...current, [key]: value || null }));
+  const secretKey = form.llm_provider === 'gigachat' ? 'gigachat_credentials'
+    : form.llm_provider === 'anthropic' ? 'anthropic_api_key' : 'llm_api_key';
 
-    try {
-      const { runAgent } = await import("./lib/harness");
-      const result = await runAgent(trimmed, {
-        write: true,
-        check: Boolean(doctor?.staging_connection),
-        uiTest: Boolean(doctor?.e2e_ui_testing),
-      });
-      setSteps(
-        result.steps.map((step, index) => ({
-          id: `live-${index}`,
-          label: toolLabel(step.tool),
-          detail: step.result.split("\n")[0].slice(0, 150),
-          status:
-            step.result.startsWith("ERROR:") || step.result.includes(": FAILED") || step.result.includes('"success": false')
-              ? "failed" as const
-              : "done" as const,
-        })),
-      );
-      setSnapshots(result.snapshots);
-      setChecksOk(result.checks_ok);
-      setUiTestOk(result.ui_test_ok);
-      const preview = previewFromResult(result);
-      if (preview) {
-        setActivePatch(preview);
-        setPatchState("pending");
-      } else {
-        setPatchState("accepted");
-      }
-      setNotice(result.summary);
-      setTask("");
-    } catch (error) {
-      setSteps([{ id: "error", label: "Не удалось запустить локальный harness", detail: String(error), status: "failed" }]);
-      setNotice(String(error));
-    } finally {
-      setRunning(false);
-    }
+  function field(key: string, title: string, placeholder: string) {
+    const secret = key.includes('password') || key.includes('api_key') || key === 'gigachat_credentials';
+    return <label className="settings-field" key={key}><span>{title}</span>
+      <input type={secret ? 'password' : 'text'} value={form[key] ?? ''} autoComplete="off"
+        placeholder={secret && settings?.secrets[key] ? 'Сохранён — оставьте пустым, чтобы не менять' : placeholder}
+        onChange={event => secret
+          ? setForm(current => ({ ...current, [key]: event.target.value }))
+          : changeField(key, event.target.value)} />
+      {secret && settings?.secrets[key] && <button className="clear-secret" onClick={() => setForm(current => ({ ...current, [key]: null }))}>Удалить сохранённый ключ/пароль при сохранении</button>}
+    </label>;
   }
 
-  function acceptPatch() {
-    setPatchState("accepted");
-    setNotice("Правка оставлена в локальном workspace. Применение к основной 1С остаётся отдельным действием.");
-  }
-
-  async function rejectPatch() {
-    if (patchState !== "pending") return;
-    try {
-      const { restoreSnapshot } = await import("./lib/harness");
-      for (const snapshotId of [...snapshots].reverse()) await restoreSnapshot(snapshotId);
-      setPatchState("rejected");
-      setActivePatch((current) => ({ ...current, modified: current.original }));
-      setNotice(snapshots.length ? "Правка отклонена: snapshots восстановлены." : "Правка отклонена.");
-      setSnapshots([]);
-      setUiTestOk(null);
-    } catch (error) {
-      setNotice(`Не удалось восстановить snapshot: ${String(error)}`);
-    }
-  }
-
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <button className="icon-button" aria-label="Меню"><Menu size={19} /></button>
-          <div className="brand-mark"><Code2 size={16} /></div>
-          <span className="brand-name">1C Harness</span>
-        </div>
-        <div className="session-title">
-          <span>Новая сессия</span><span className="session-separator">/</span>
-          <span className="session-time">{doctor?.llm_model ?? "GigaChat 3 Ultra"}</span>
-        </div>
-        <div className="top-actions">
-          <button className={`connect-button ${connected ? "connected" : ""}`} onClick={() => void connectHarness()}>
-            <span className="onec-badge">1C</span>{connected ? "1С подключена" : "Подключить 1С"}<ChevronDown size={14} />
-          </button>
-          <span className={`status-dot ${connected ? "online" : ""}`} />
-          <button className="icon-button"><Settings size={18} /></button>
-        </div>
-      </header>
-
-      <main className="workspace-layout">
-        <section className="conversation-pane">
-          <div className="conversation-scroll">
-            <div className="user-bubble">{lastTask}</div>
-            <div className="agent-block">
-              <div className="agent-avatar"><Bot size={18} /></div>
-              <div className="agent-content">
-                <div className="run-header">
-                  <span>Ход работы · {steps.length} шагов</span>
-                  <span className="run-count">{completed}/{steps.length} выполнено</span>
-                </div>
-                <div className="steps-card">
-                  {steps.map((step) => (
-                    <div className="step-row" key={step.id}>
-                      <span className={`step-icon ${step.status}`}>{statusIcon(step.status)}</span>
-                      <div className="step-copy"><span>{step.label}</span>{step.detail && <small>{step.detail}</small>}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="agent-summary">
-                  <p>
-                    Правки остаются в workspace. Staging-проверки и E2E Test Manager выполняются только на отдельных тестовых базах;
-                    основная инфобаза не изменяется автоматически.
-                  </p>
-                  <div className="summary-chip-row">
-                    {snapshots.length > 0 && <span className="summary-chip"><ShieldCheck size={14} /> snapshot создан</span>}
-                    {checksOk === true && <span className="summary-chip"><CheckCircle2 size={14} /> staging checks: OK</span>}
-                    {uiTestOk === true && <span className="summary-chip"><TestTube2 size={14} /> E2E UI: OK</span>}
-                    {uiTestOk === false && <span className="summary-chip"><X size={14} /> E2E UI: FAILED</span>}
-                    {doctor?.com_configured && <span className="summary-chip"><Database size={14} /> COM read доступен</span>}
-                  </div>
-                </div>
-                {notice && <div className="notice">{notice}</div>}
+  return <div className="app-shell">
+    <header className="topbar">
+      <div className="brand-block"><div className="brand-mark"><Code2 size={17}/></div><span className="brand-name">1C Harness</span></div>
+      <div className="session-title">{doctor?.llm_model ?? 'Новая сессия'}</div>
+      <div className="top-actions">
+        <button className="connect-button" disabled={busy || pending} onClick={() => void openSettings()}><span className="onec-badge">1C</span>Подключение и модель</button>
+        <button className="icon-button" aria-label="Обновить состояние" disabled={busy} onClick={() => void action(refresh)}><RefreshCw size={17}/></button>
+        <button className="icon-button" aria-label="Настройки" disabled={busy || pending} onClick={() => void openSettings()}><Settings size={18}/></button>
+      </div>
+    </header>
+    <main className="workspace-layout">
+      <section className="conversation-pane">
+        <div className="conversation-scroll">
+          {(running || session) && <div className="user-bubble">{running ? task : session?.task}</div>}
+          <div className="agent-block">
+            <div className="agent-avatar"><Bot size={18}/></div>
+            <div className="agent-content">
+              {!session && !running && <div className="welcome"><h2>Разрабатывайте на 1С<br/>вместе с ИИ</h2><p>Подключите модель, выберите исходники конфигурации и опишите задачу. Все изменения появятся справа для проверки.</p><button className="accept-button" disabled={busy} onClick={() => void openSettings()}>Настроить подключение</button></div>}
+              {steps.length > 0 && <div className="run-header">Ход работы · {steps.length} шагов</div>}
+              <div className="steps-card">
+                {steps.map((step, i) => {
+                  const failed = /ERROR:|: FAILED|"success": false/.test(step.result ?? '');
+                  return <details className="step-details" key={i}><summary><span className={`step-icon ${failed ? 'failed' : 'done'}`}>{failed ? <X size={12}/> : <Check size={12}/>}</span>{labels[step.tool ?? ''] ?? step.tool}</summary><pre>{step.result}</pre></details>;
+                })}
+                {running && <div className="live-step"><RefreshCw size={14} className="spin"/>{currentTool}</div>}
               </div>
+              {session && !running && <div className="agent-summary"><p className="preserve-lines">{session.summary}</p><div className="summary-chip-row">
+                <span className="summary-chip">{session.checks_ok === true ? 'Проверки 1С пройдены' : session.checks_ok === false ? 'Проверки 1С не пройдены' : 'Проверки 1С не выполнялись'}</span>
+                {session.ui_test_ok !== null && <span className="summary-chip">E2E: {session.ui_test_ok ? 'пройден' : 'ошибка'}</span>}
+                {session.status !== 'completed' && <span className="summary-chip">Запуск не завершён: {session.status}</span>}
+              </div></div>}
+              {notice && <div className="notice" role="status">{notice}</div>}
             </div>
           </div>
-
-          <div className="composer-wrap">
-            <div className="context-strip">
-              <div className="context-title"><Database size={14} /> Контекст текущей конфигурации</div>
-              <span>{doctor?.workspace ?? "workspace / выгруженная конфигурация"}</span>
+        </div>
+        <div className="composer-wrap">
+          <div className="context-strip"><div className="context-title"><Database size={14}/>Исходники конфигурации</div><span>{doctor?.source_count ?? 0} файлов</span></div>
+          <div className="workspace-path" title={doctor?.workspace}>{doctor?.workspace ?? 'Выберите папку в настройках'}</div>
+          <div className="composer">
+            <textarea aria-label="Задача для ИИ" value={task} disabled={running} onChange={event => setTask(event.target.value)}
+              onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void run(); } }}
+              placeholder={pending ? 'Сначала примите или отклоните изменения' : 'Опишите, что нужно сделать в 1С…'}/>
+            <div className="composer-footer"><div className="composer-tools">
+              <label className="mode-pill"><input type="checkbox" checked={check} disabled={busy} onChange={event => { setCheck(event.target.checked); if (!event.target.checked) setUiTest(false); }}/>Проверять в 1С</label>
+              <label className="mode-pill"><input type="checkbox" checked={uiTest} disabled={busy || !check || !doctor?.e2e_ui_testing} onChange={event => setUiTest(event.target.checked)}/>UI-тест</label>
             </div>
-            <div className="composer">
-              <textarea
-                value={task}
-                onChange={(event) => setTask(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void submitTask();
-                  }
-                }}
-                placeholder="Опишите, что нужно сделать в 1С..."
-              />
-              <div className="composer-footer">
-                <div className="composer-tools">
-                  <button className="soft-icon"><Paperclip size={16} /></button>
-                  <span className="mode-pill"><MessageSquareText size={13} /> Агент</span>
-                  {doctor?.e2e_ui_testing && <span className="mode-pill"><TestTube2 size={13} /> E2E</span>}
-                </div>
-                <button className="send-button" disabled={!task.trim() || running} onClick={() => void submitTask()}>
-                  {running ? <RefreshCw size={17} className="spin" /> : <Send size={17} />}
-                </button>
-              </div>
+            {running ? <button className="send-button" aria-label="Остановить" onClick={() => void request('cancel').then(() => setNotice('Остановка после текущего запроса модели или команды 1С.')).catch(error => setNotice(String(error)))}><Square size={14}/></button>
+              : <button className="send-button" aria-label="Отправить" disabled={!task.trim() || busy || pending || !doctor?.can_run} onClick={() => void run()}><Send size={17}/></button>}
             </div>
           </div>
-        </section>
-
-        <section className="review-pane">
-          <div className="review-header">
-            <div className="file-tab">
-              <FileCode2 size={16} />
-              <div><strong>{activePatch.file.split("/").at(-1)}</strong><span>{activePatch.file}</span></div>
-            </div>
-            <div className="review-meta"><span>Review</span><button className="icon-button"><X size={17} /></button></div>
-          </div>
-          <div className="review-toolbar">
-            <span className="change-dot" /><span>{activePatch.language.toUpperCase()} · local staged change</span>
-            <div className="toolbar-spacer" />
-            <button className="toolbar-action" onClick={() => setNotice(
-              doctor?.e2e_ui_testing ? "E2E доступен агенту для релевантных UI-задач." : "Настрой Test Manager для E2E-проверки.",
-            )}><Play size={14} /> Проверить</button>
-            <button className="toolbar-action"><RotateCcw size={14} /> Snapshot</button>
-          </div>
-          <div className="editor-wrap">
-            <DiffEditor
-              beforeMount={registerBsl}
-              original={activePatch.original}
-              modified={activePatch.modified}
-              language={activePatch.language}
-              theme="vs"
-              options={{
-                readOnly: true,
-                renderSideBySide: false,
-                minimap: { enabled: false },
-                fontSize: 13,
-                lineHeight: 22,
-                padding: { top: 18, bottom: 18 },
-                scrollBeyondLastLine: false,
-                wordWrap: "on",
-                renderOverviewRuler: false,
-                overviewRulerBorder: false,
-                folding: true,
-              }}
-            />
-          </div>
-          <div className="review-footer">
-            <span className={`review-state ${patchState}`}>
-              {patchState === "pending" && "Изменение подготовлено для проверки"}
-              {patchState === "accepted" && "Правка принята локально"}
-              {patchState === "rejected" && "Правка отклонена и восстановлена"}
-            </span>
-            <div className="review-buttons">
-              <button className="reject-button" onClick={() => void rejectPatch()} disabled={patchState !== "pending"}>Отклонить</button>
-              <button className="accept-button" onClick={acceptPatch} disabled={patchState !== "pending"}>
-                <Check size={16} /> Принять
-              </button>
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
+        </div>
+      </section>
+      <section className="review-pane">
+        <div className="review-header"><div className="file-tab"><FileCode2 size={16}/><strong>Изменения</strong></div>
+          {session && session.files.length > 0 && <select aria-label="Изменённый файл" value={active} onChange={event => setActive(Number(event.target.value))}>{session.files.map((item, index) => <option key={item.path} value={index}>{item.path}</option>)}</select>}
+        </div>
+        <div className="review-toolbar">{session?.review_state === 'accepted' && session.files.length > 0 && <button className="toolbar-action" disabled={busy || session.checks_ok !== true || session.deployment === 'applied'} onClick={() => setApplyOpen(true)}>{session.deployment === 'applied' ? 'Применено в 1С' : 'Применить в 1С…'}</button>}<span>{file ? `${active + 1} / ${session?.files.length} · ${file.created ? 'Новый файл' : file.deleted ? 'Удаление' : 'Изменение'}` : 'Здесь появится сравнение кода'}</span></div>
+        <div className="editor-wrap">{file ? <DiffEditor beforeMount={registerBsl} original={file.original} modified={file.modified}
+          language={file.path.endsWith('.bsl') ? 'bsl' : 'xml'} theme="vs" options={{readOnly: true, renderSideBySide: false, minimap: {enabled: false}, fontSize: 13, lineHeight: 22, scrollBeyondLastLine: false, wordWrap: 'on'}}/>
+          : <div className="empty-review"><Code2 size={38} strokeWidth={1}/><h3>Каждое изменение — на виду</h3><p>Полный код до и после.<br/>Принятие или отклонение всей задачи.</p></div>}</div>
+        <div className="review-footer"><span className={`review-state ${session?.review_state}`}>{pending ? 'Ожидает вашего решения' : session?.review_state === 'accepted' ? 'Сохранено в исходниках' : session?.review_state === 'rejected' ? 'Исходники восстановлены' : 'Нет изменений'}</span>
+          <div className="review-buttons"><button className="reject-button" disabled={!pending || busy} onClick={() => void action(async () => setSession(await request<Session>('reject')))}>Отклонить всё</button><button className="accept-button" disabled={!pending || busy || session?.status !== 'completed' || session?.checks_ok === false} onClick={() => void action(async () => setSession(await request<Session>('accept')))}><Check size={15}/>Принять всё</button></div>
+        </div>
+      </section>
+    </main>
+    {applyOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="apply-title"><h2 id="apply-title">Применить изменения в основной базе?</h2><p className="settings-intro">Приложение создаст резервную копию .dt, загрузит проверенные исходники и обновит конфигурацию базы данных. Завершите другие сеансы работы с этой базой. При ошибке путь к резервной копии появится в сообщении.</p><div className="settings-actions"><button className="reject-button" disabled={busy} onClick={() => setApplyOpen(false)}>Отмена</button><button className="accept-button" disabled={busy} onClick={() => { setApplyOpen(false); void action(async () => { const result = await request<Session>('apply', {confirmed: true}); setSession(result); setNotice(`Применено. Резервная копия: ${result.backup}`); }); }}>Создать копию и применить</button></div></section></div>}
+    {settingsOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div className="settings-heading"><h2 id="settings-title">Подключение</h2><button className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={() => setSettingsOpen(false)}><X size={20}/></button></div>
+      <p className="settings-intro">Настройте модель и 1С здесь. Для проверок используйте отдельную копию базы. Принятие правок сохраняет исходники; основная база автоматически не обновляется.</p>
+      <div className="settings-grid"><label className="settings-field"><span>Провайдер ИИ</span><select value={form.llm_provider ?? 'gigachat'} onChange={event => changeField('llm_provider', event.target.value)}>{['gigachat','openai','deepseek','anthropic','openai_compatible'].map(provider => <option key={provider} value={provider}>{provider}</option>)}</select></label>
+        {field(secretKey, form.llm_provider === 'gigachat' ? 'Authorization Key GigaChat' : 'API-ключ', '')}
+        {settingFields.map(([key, title, placeholder]) => field(key, title, placeholder))}
+        {form.llm_provider === 'openai_compatible' && field('openai_compatible_base_url', 'API Base URL', 'https://provider.example/v1')}
+      </div>
+      <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
+        {field('gigachat_ca_bundle', 'CA-сертификат GigaChat (PEM)', 'Путь к файлу сертификата')}
+        {field('onec_com_connection', 'COM connection string', 'File="C:\\1C\\dev";')}
+        {field('onec_test_manager_connection', 'База Test Manager', '/F "C:\\1C\\test-manager"')}
+        {field('onec_test_manager_user', 'Пользователь Test Manager', '')}
+        {field('onec_test_manager_password', 'Пароль Test Manager', '')}
+      </div></details>
+      {doctor && <div className="connection-report">Исходники: {doctor.source_count} · Путь к 1С: {doctor.exe_exists ? 'найден' : 'не найден'} · Ключ модели: {doctor.llm_credentials ? 'сохранён' : 'не задан'}{doctor.errors.map(error => <p key={error}>{error}</p>)}</div>}
+      {notice && <div className="notice" role="status">{notice}</div>}
+      <div className="settings-actions"><button className="reject-button" disabled={busy} onClick={() => void action(async () => { const data = await request<{message: string}>('test_model'); setNotice(`Модель ответила: ${data.message}`); })}>Проверить модель</button>
+        <button className="reject-button" disabled={busy} onClick={() => void action(async () => { setDoctor(await request<HarnessDoctor>('export')); setNotice('Исходники выгружены из 1С. Можно начать задачу.'); })}>Выгрузить из 1С</button>
+        <button className="accept-button" disabled={busy} onClick={() => void saveSettings()}>{busy ? 'Подождите…' : 'Сохранить настройки'}</button></div>
+      <small className="settings-note">Проверка модели и выгрузка используют сохранённые настройки. Ключи на Windows защищены шифрованием учётной записи.</small>
+    </section></div>}
+  </div>;
 }

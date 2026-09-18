@@ -4,6 +4,41 @@ Model-agnostic AI harness and desktop review app for safe development and automa
 
 The target is a local **“Codex / Claude Code for 1C”**: an agent that understands metadata and BSL, edits exported sources, validates changes in a disposable staging infobase, inspects runtime data through `V83.COMConnector`, and verifies UI behavior through the standard Test Client/Test Manager stack.
 
+## v0.4 desktop workflow
+
+**Development preview, not a production certification.** Automated tests and installer builds cannot verify Designer,
+COM and Test Manager behavior without a licensed Windows + 1C installation. Target: 1C 8.3 XML source exports and BSL.
+1C 7.7 and editing the currently open Configurator editor are not implemented.
+
+Download the installer artifact from the latest successful **Windows desktop** run under GitHub Actions.
+It bundles the Python bridge; Python, Node and Git are not required on the user's computer.
+
+1. Open **Подключение и модель**, choose the provider, enter its model ID and key.
+2. Enter the 1cv8.exe path, primary development infobase, a separate staging copy and an absolute source folder.
+   Connections use `/F "C:\1C\dev"` or `/S "server\base"`. Enter credentials in separate fields.
+3. Save, then **Проверить модель**. Select existing XML/BSL exports, or use **Выгрузить из 1С** into an empty folder.
+4. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes.
+5. Review **all files** in the selector. Accept keeps source changes; reject restores the pre-task bytes, including BOM/CRLF.
+6. If staging checks passed, **Применить в 1С…** offers a separate confirmation, creates a `.dt` backup,
+   then loads the checked sources and updates the primary database. A failed backup blocks deployment.
+
+A new task is blocked until pending review is resolved. Interrupted/failed sessions remain reviewable after restart.
+External source edits block automatic acceptance/rollback. Stop is cooperative: the current model/1C call finishes first.
+Unchecking **Проверять в 1С** allows source-only work but disables deployment. The UI never treats configured paths as
+proof of a live connection. All initial content is empty; there are no simulated successful checks.
+
+Settings are stored per user; Windows uses DPAPI encryption. Desktop does not enable runtime data writes.
+Optional COM connection strings can include credentials and are protected with the rest of the settings.
+The code editor and workers are bundled for offline use. Model calls still need network access.
+
+### First real 1C smoke test
+
+Use disposable primary/staging copies, save a backup independently, and start with a small existing BSL module.
+Ask the agent to add a harmless message, inspect every changed file, verify actual Designer logs, reject and check
+that the bytes were restored. Repeat, accept, then test the explicit deployment and confirm the behavior in 1C.
+For forms, separately configure a Test Manager infobase and enable UI-test. Record platform/configuration versions,
+Designer logs and the session result when reporting a failure. These native tests are still required before production use.
+
 ## v0.3 capabilities
 
 - GigaChat 3 Ultra, OpenAI, DeepSeek, Anthropic and generic OpenAI-compatible providers;
@@ -141,8 +176,8 @@ npm run tauri dev
 2. Richer managed-form semantics: groups, tables, choice fields and event wiring.
 3. Broader extension borrowing/metadata merge coverage and platform-version fixtures.
 4. Richer UI-test DSL: table rows, choices, dialogs, screenshots and multi-client scenarios.
-5. Streaming desktop tool events, multi-file review and test-result cards.
+5. Native Windows + 1C acceptance tests on representative customer configurations.
 
 ## Status
 
-**v0.3 alpha.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.
+**v0.4 development preview.** Linux CI covers Python contracts/tests and the desktop TypeScript/Vite build. Actual Designer/COM/Test Manager execution requires a Windows host with 1C installed. Use disposable staging/test infobases.
