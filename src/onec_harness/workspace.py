@@ -165,7 +165,11 @@ class Workspace:
                     modified = current_path.read_text(encoding="utf-8-sig")
                 except UnicodeDecodeError:
                     continue
-            baseline = self.baseline if self.baseline is not None else (None if self._git_available() else self._persistent_baseline())
+            baseline = (
+                self.baseline
+                if self.baseline is not None
+                else (None if self._git_available() else self._persistent_baseline())
+            )
             if baseline is not None:
                 original = baseline.get(relative, "")
             else:
