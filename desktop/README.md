@@ -1,35 +1,22 @@
-# 1C Harness Desktop
+# Desktop development (Windows x64)
 
-Desktop shell for the local 1C Harness. The UI follows a review-first workflow:
-
-1. user describes a task in the left conversation pane;
-2. the agent exposes its engineering steps (`metadata`, `search`, `read`, `patch`, checks);
-3. staged BSL/XML changes are shown as a diff on the right;
-4. the user accepts or rejects the local source change;
-5. applying the accepted change to a 1C configuration/test infobase remains a separate explicit action.
-
-## Development
-
-Install the Python harness first from the repository root:
+End users install the NSIS artifact from the Windows desktop workflow and configure everything in the app.
+For local development, from the repository root:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
-```
-
-Then install desktop dependencies:
-
-```powershell
+pip install -e ".[windows,dev]" pyinstaller
+python scripts/build_sidecar.py
 cd desktop
-npm install
+npm ci
 npm run tauri dev
 ```
 
-The Tauri bridge launches the `onec-harness` executable without a shell. You can override its location with:
+`npm run tauri build` produces the NSIS installer with a bundled Python sidecar. Rust and Windows C++ build tools
+are build-time dependencies only. The development fallback calls `python -m onec_harness.desktop_bridge`;
+`ONEC_HARNESS_PYTHON` can select the venv interpreter. Production requires the packaged sidecar.
 
-```powershell
-$env:ONEC_HARNESS_BIN = "C:\\path\\to\\onec-harness.exe"
-```
-
-The current screen contains demo review data so the layout can be developed without a configured 1C installation. The connect button already calls `onec-harness doctor --json`, and chat requests call the read-only agent API. Real staged-patch streaming is the next integration step.
+The browser-only Vite preview cannot call native commands. It displays a connection error rather than fake results.
+The bridge uses one JSON request on stdin and NDJSON progress/results on stdout, keeping credentials off process arguments.
+Settings and source sessions are per user/project. Secrets are not returned to the webview after saving.

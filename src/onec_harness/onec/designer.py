@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from onec_harness.settings import Settings
+from onec_harness.connections import require_test_connection
 
 
 class DesignerError(RuntimeError):
@@ -38,6 +39,11 @@ class Designer:
         self.settings = settings
         if settings.onec_exe is None:
             raise DesignerError("ONEC_EXE is not configured")
+        if connection_override is not None:
+            try:
+                require_test_connection(settings.onec_ib_connection, connection_override)
+            except ValueError as exc:
+                raise DesignerError(str(exc)) from exc
         self.exe = settings.onec_exe.expanduser()
         self.connection = settings.onec_ib_connection if connection_override is None else connection_override
         if not self.connection.strip():

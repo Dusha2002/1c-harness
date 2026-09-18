@@ -29,6 +29,7 @@ class Workspace:
 
     def __init__(self, root: Path) -> None:
         self.root = root.expanduser().resolve()
+        self.baseline: dict[str, str] | None = None
 
     def ensure_exists(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -37,6 +38,8 @@ class Workspace:
         path = (self.root / relative_path).resolve()
         if path != self.root and self.root not in path.parents:
             raise WorkspaceError(f"Path escapes workspace: {relative_path}")
+        if ".git" in path.relative_to(self.root).parts:
+            raise WorkspaceError("Hidden/internal workspace paths are not available to agent tools")
         return path
 
     def read_text(self, relative_path: str | Path) -> str:
@@ -64,6 +67,9 @@ class Workspace:
         for path in self.root.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in suffixes or ".onec-harness" in path.parts:
                 continue
+            if any(part.startswith(".") for part in path.relative_to(self.root).parts):
+                continue
+            self.resolve(path.relative_to(self.root))
             try:
                 lines = path.read_text(encoding="utf-8-sig").splitlines()
             except UnicodeDecodeError:
@@ -84,17 +90,31 @@ class Workspace:
         )
         return result
 
+    def source_texts(self) -> dict[str, str]:
+        result = {}
+        for path in self.root.rglob("*"):
+            relative = path.relative_to(self.root)
+            if any(part.startswith(".") for part in relative.parts) or path.suffix.lower() not in {".xml", ".bsl"}:
+                continue
+            if path.is_file():
+                result[relative.as_posix()] = self.read_text(relative)
+        return result
+
     def changed_paths(self) -> list[str]:
-        status = self._git(["status", "--porcelain", "--untracked-files=all"])
+        if self.baseline is not None:
+            current = self.source_texts()
+            return sorted(p for p in self.baseline.keys() | current.keys() if self.baseline.get(p) != current.get(p))
+        status = self._git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         if status.returncode != 0:
             raise WorkspaceError(status.stderr.strip() or "git status failed")
         paths: list[str] = []
-        for line in status.stdout.splitlines():
-            if len(line) < 4:
+        records = iter(status.stdout.split("\0"))
+        for record in records:
+            if len(record) < 4:
                 continue
-            raw = line[3:].strip().strip('"')
-            if " -> " in raw:
-                raw = raw.split(" -> ", 1)[1]
+            raw = record[3:]
+            if "R" in record[:2] or "C" in record[:2]:
+                next(records, None)
             if raw == ".onec-harness" or raw.startswith(".onec-harness/"):
                 continue
             if raw not in paths:
@@ -111,12 +131,19 @@ class Workspace:
                     modified = current_path.read_text(encoding="utf-8-sig")
                 except UnicodeDecodeError:
                     continue
-            previous = self._git(["show", f"HEAD:{relative}"])
-            original = previous.stdout if previous.returncode == 0 else ""
+            if self.baseline is not None:
+                original = self.baseline.get(relative, "")
+            else:
+                previous = self._git(["show", f"HEAD:{relative}"])
+                original = previous.stdout if previous.returncode == 0 else ""
             reviews.append(FileReview(path=relative, original=original, modified=modified))
         return reviews
 
     def git_diff(self) -> str:
+        if self.baseline is not None:
+            return "\n".join("".join(difflib.unified_diff(
+                review.original.splitlines(keepends=True), review.modified.splitlines(keepends=True),
+                fromfile=f"a/{review.path}", tofile=f"b/{review.path}")) for review in self.review_changes())
         result = self._git(["diff", "--", ".", ":(exclude).onec-harness"])
         if result.returncode != 0:
             raise WorkspaceError(result.stderr.strip() or "git diff failed")

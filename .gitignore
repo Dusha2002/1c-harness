@@ -13,3 +13,9 @@ desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
 .DS_Store
+/dist/
+/build/
+*.spec
+desktop/src-tauri/binaries/*.exe
+
+*.tsbuildinfo

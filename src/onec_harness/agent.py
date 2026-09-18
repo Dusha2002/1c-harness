@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from collections.abc import Callable
 
 from onec_harness.extensions import ExtensionSourceManager
 from onec_harness.metadata import ConfigurationIndex
@@ -10,7 +11,7 @@ from onec_harness.onec.com import ComConnector, ComConnectorError
 from onec_harness.onec.designer import Designer, DesignerError
 from onec_harness.onec.e2e import TestManagerRunner
 from onec_harness.onec.testing import ScenarioCompiler, TestClientError
-from onec_harness.providers.base import LLMProvider, Message
+from onec_harness.providers.base import LLMProvider, Message, ProviderError
 from onec_harness.semantic import SemanticMetadataError
 from onec_harness.semantic_tools import SEMANTIC_TOOLS, SemanticToolExecutor
 from onec_harness.snapshots import SnapshotError, SnapshotStore
@@ -68,6 +69,7 @@ class AgentResult:
     snapshots: list[str] = field(default_factory=list)
     checks_ok: bool | None = None
     ui_test_ok: bool | None = None
+    status: str = "completed"
 
 
 @dataclass(slots=True)
@@ -97,7 +99,11 @@ class HarnessAgent:
         execute_ui_tests: bool = False,
         allow_runtime_writes: bool = False,
         max_result_chars: int = 60_000,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
+        self.on_event = on_event or (lambda event: None)
+        self.cancelled = cancelled or (lambda: False)
         self.provider = provider
         self.workspace = workspace
         self.designer = designer
@@ -238,17 +244,31 @@ class HarnessAgent:
             return self._clip("\n".join(f"{m.path}:{m.line}: {m.text}" for m in matches) or "No matches")
         if tool == "read":
             path = str(args.get("path", ""))
+            if not path.lower().endswith((".bsl", ".xml")) or any(
+                part.startswith(".") for part in path.replace("\\", "/").split("/")
+            ):
+                return "ERROR: only non-internal BSL/XML sources are available"
             return self._clip(self.workspace.read_text(path)) if path else "ERROR: path is required"
 
         if tool == "patch":
             if not self.allow_writes:
                 return "ERROR: source writes are disabled. Run agent with --write."
             path, old, new = str(args.get("path", "")), str(args.get("old", "")), str(args.get("new", ""))
+            if not path.lower().endswith((".bsl", ".xml")) or any(
+                part.startswith(".") for part in path.replace("\\", "/").split("/")
+            ):
+                return "ERROR: only BSL/XML source files can be patched"
             if not path or not old:
                 return "ERROR: patch requires path and non-empty old text"
             snapshot = self.snapshots.create([path])
             self.workspace.replace_once(path, old, new)
-            self._mark_source_change(snapshot.snapshot_id)
+            parts = self.workspace.resolve(path).relative_to(self.workspace.root).parts
+            if len(parts) >= 3 and parts[0] == "Extensions":
+                self._touch_common(snapshot.snapshot_id)
+                self._extension_changed.add(parts[1])
+                self._extension_validation[parts[1]] = _ValidationState()
+            else:
+                self._mark_source_change(snapshot.snapshot_id)
             return f"Patched {path}. snapshot_id={snapshot.snapshot_id}"
 
         if tool in SEMANTIC_TOOLS:
@@ -285,8 +305,9 @@ class HarnessAgent:
             return self._mark_extension_change(extension, change)
 
         if tool == "diff":
+            diff = self.workspace.git_diff() or "No changes"
             self._diff_seen = True
-            return self._clip(self.workspace.git_diff() or "No changes")
+            return self._clip(diff)
 
         if tool == "stage_config":
             designer = self._require_checks()
@@ -455,6 +476,8 @@ class HarnessAgent:
                     return f"Run check_extension_modules successfully for {extension} before finish."
                 if state.config_ok is not True:
                     return f"Run check_extension_config successfully for {extension} before finish."
+        if self.execute_ui_tests and self._source_changed and not self._ui_test_attempted:
+            return "UI testing was requested. Run run_ui_test before finish."
         if self._ui_test_attempted and self._ui_test_ok is not True:
             return "The latest E2E UI test failed. Fix the problem or rollback before finish."
         return None
@@ -464,8 +487,19 @@ class HarnessAgent:
             raise ValueError("max_steps must be >= 1")
         messages = [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=f"Задача:\n{task}")]
         steps: list[AgentStep] = []
-        for _ in range(max_steps):
-            response = await self.provider.complete(messages)
+        for iteration in range(max_steps):
+            if self.cancelled():
+                return AgentResult("Остановлено пользователем. Изменения доступны для review.", steps,
+                                   list(self._snapshot_ids), self._checks_ok(), self._ui_test_ok, "cancelled")
+            self.on_event({"type": "thinking", "iteration": iteration + 1})
+            try:
+                response = await self.provider.complete(messages)
+            except (ProviderError, OSError) as exc:
+                return AgentResult(f"Ошибка модели: {exc}", steps, list(self._snapshot_ids),
+                                   self._checks_ok(), self._ui_test_ok, "failed")
+            if self.cancelled():
+                return AgentResult("Остановлено пользователем.", steps, list(self._snapshot_ids),
+                                   self._checks_ok(), self._ui_test_ok, "cancelled")
             try:
                 action = self._parse_action(response.content)
             except AgentProtocolError as exc:
@@ -485,6 +519,7 @@ class HarnessAgent:
                     continue
                 summary = str(args.get("summary", "")).strip() or "Agent finished without a summary."
                 return AgentResult(summary, steps, list(self._snapshot_ids), self._checks_ok(), self._ui_test_ok)
+            self.on_event({"type": "tool_start", "tool": tool})
             try:
                 result = self._execute_tool(tool, args)
             except (
@@ -500,12 +535,14 @@ class HarnessAgent:
             ) as exc:
                 result = f"ERROR: {exc}"
             steps.append(AgentStep(tool=tool, args=args, result=result))
+            self.on_event({"type": "tool_end", "tool": tool, "args": args, "result": result})
             messages.extend([
                 Message(role="assistant", content=response.content),
                 Message(role="user", content=f"TOOL_RESULT {tool}:\n{result}"),
             ])
         return AgentResult(
             summary=f"Stopped after reaching max_steps={max_steps}. No finish action received.",
+            status="incomplete",
             steps=steps,
             snapshots=list(self._snapshot_ids),
             checks_ok=self._checks_ok(),
