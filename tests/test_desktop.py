@@ -221,3 +221,25 @@ def test_discovery_finds_platform_and_registered_base(tmp_path, monkeypatch) -> 
 
     assert discover_onec_executables() == [str(exe.resolve())]
     assert discover_infobases() == [{'name': 'Demo', 'connection': '/F "C:\\Bases\\Demo"'}]
+
+
+def test_desktop_service_exposes_discovery(tmp_path, monkeypatch) -> None:
+    program_files = tmp_path / 'Program Files'
+    exe = program_files / '1cv8' / '8.3.25.1000' / 'bin' / '1cv8.exe'
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b'')
+
+    appdata = tmp_path / 'AppData' / 'Roaming'
+    registry = appdata / '1C' / '1CEStart' / 'ibases.v8i'
+    registry.parent.mkdir(parents=True)
+    registry.write_text('[Demo]\nConnect=File="C:\\Bases\\Demo";\n', encoding='utf-8')
+
+    monkeypatch.setenv('ProgramFiles', str(program_files))
+    monkeypatch.delenv('ProgramFiles(x86)', raising=False)
+    monkeypatch.setenv('APPDATA', str(appdata))
+    monkeypatch.setenv('ONEC_HARNESS_CONFIG_DIR', str(tmp_path / 'settings'))
+
+    result = DesktopService(emit_event=lambda event: None).discover()
+    assert result['executables'] == [str(exe.resolve())]
+    assert result['infobases'][0]['name'] == 'Demo'
+    assert result['suggested_workspace'].endswith('workspace')
