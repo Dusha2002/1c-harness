@@ -286,6 +286,8 @@ class DesktopService:
 
     async def dispatch(self, request: dict) -> Any:
         op = request.get('op')
+        if op == 'bootstrap':
+            return {'doctor': self.doctor(), 'session': self.review()}
         if op == 'settings':
             return public_config()
         if op == 'save_settings':
