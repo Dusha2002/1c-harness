@@ -1,6 +1,6 @@
 import { DiffEditor, type BeforeMount } from '@monaco-editor/react';
 import { Bot, Check, Code2, Database, FileCode2, PanelRightClose, PanelRightOpen, RefreshCw, Search, Send, Settings, Square, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { request, type Progress } from './lib/harness';
 import SetupWizard from './SetupWizard';
 import SkillsPanel from './SkillsPanel';
@@ -137,7 +137,7 @@ export default function App() {
     }
   }
 
-  function startReviewResize(event: React.PointerEvent<HTMLDivElement>) {
+  function startReviewResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (!reviewOpen) return;
     event.preventDefault();
     const onMove = (move: PointerEvent) => {
