@@ -3,6 +3,7 @@ import { Bot, Check, Code2, Database, FileCode2, RefreshCw, Send, Settings, Squa
 import { useEffect, useState } from 'react';
 import { request, type Progress } from './lib/harness';
 import SetupWizard from './SetupWizard';
+import SkillsPanel from './SkillsPanel';
 import type { DesktopSettings, DiscoveryResult, HarnessDoctor, Session } from './types';
 const registerBsl: BeforeMount = (monaco) => {
   if (monaco.languages.getLanguages().some((language) => language.id === "bsl")) return;
@@ -32,6 +33,7 @@ const labels: Record<string, string> = {
   symbols: 'Поиск процедур и функций', patch: 'Изменение кода', diff: 'Просмотр изменений',
   stage_config: 'Загрузка в тестовую базу', check_modules: 'Проверка модулей 1С', check_config: 'Проверка конфигурации',
   run_ui_test: 'Тест интерфейса 1С', runtime_query: 'Запрос к 1С', rollback: 'Восстановление исходников',
+  list_skills: 'Список skills', load_skill: 'Загрузка skill',
 };
 const settingFields = [
   ['llm_model', 'Модель', 'Например, GigaChat-3-Ultra'],
@@ -254,7 +256,8 @@ export default function App() {
         {settingFields.map(([key, title, placeholder]) => field(key, title, placeholder))}
         {form.llm_provider === 'openai_compatible' && field('openai_compatible_base_url', 'API Base URL', 'https://provider.example/v1')}
       </div>
-      <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
+      <SkillsPanel />
+            <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
         {field('gigachat_ca_bundle', 'CA-сертификат GigaChat (PEM)', 'Путь к файлу сертификата')}
         {field('onec_com_connection', 'COM connection string', 'File="C:\\1C\\dev";')}
         {field('onec_test_manager_connection', 'База Test Manager', '/F "C:\\1C\\test-manager"')}
