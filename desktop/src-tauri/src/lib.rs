@@ -90,12 +90,10 @@ fn transact(
             return Ok(event["data"].clone());
         }
         if event["type"] == "error" {
-            return Err(
-                event["message"]
-                    .as_str()
-                    .unwrap_or("Bridge error")
-                    .to_string(),
-            );
+            return Err(format!(
+                "APP:{}",
+                event["message"].as_str().unwrap_or("Bridge error")
+            ));
         }
         let _ = on_event.send(event);
     }
@@ -112,20 +110,24 @@ fn persistent_request(
     }
 
     let first = transact(guard.as_mut().expect("bridge initialized"), request, on_event);
-    if first.is_ok() {
-        return first;
+    match first {
+        Ok(value) => Ok(value),
+        Err(error) if error.starts_with("APP:") => Err(error.trim_start_matches("APP:").to_string()),
+        Err(_) => {
+            // A packaged bridge can be terminated by antivirus/update/user logoff.
+            // Restart once transparently instead of making the next UI click pay for it.
+            *guard = None;
+            *guard = Some(spawn_bridge(true)?);
+            transact(guard.as_mut().expect("bridge restarted"), request, on_event)
+                .map_err(|error| error.trim_start_matches("APP:").to_string())
+        }
     }
-
-    // A packaged bridge can be terminated by antivirus/update/user logoff.
-    // Restart once transparently instead of making the next UI click pay for it.
-    *guard = None;
-    *guard = Some(spawn_bridge(true)?);
-    transact(guard.as_mut().expect("bridge restarted"), request, on_event)
 }
 
 fn one_shot_request(request: &Value, on_event: &Channel<Value>) -> Result<Value, String> {
     let mut process = spawn_bridge(false)?;
     transact(&mut process, request, on_event)
+        .map_err(|error| error.trim_start_matches("APP:").to_string())
 }
 
 #[tauri::command]
