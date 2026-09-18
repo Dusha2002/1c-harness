@@ -31,7 +31,10 @@
     "targets": [
       "nsis"
     ],
-    "icon": [],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
     "externalBin": [
       "binaries/onec-harness-bridge"
     ]
