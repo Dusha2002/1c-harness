@@ -287,3 +287,37 @@ def test_desktop_can_import_and_delete_user_skill(service, tmp_path) -> None:
 def test_desktop_exposes_builtin_onec_skill(service) -> None:
     skills = service.skill_list()
     assert any(item["name"] == "onec-engineering" and item["source"] == "builtin" for item in skills)
+
+
+def test_discovery_scans_are_explicit_and_independent(service, monkeypatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        desktop_bridge,
+        'discover_onec_executables',
+        lambda: calls.append('platforms') or ['C:\\Program Files\\1cv8\\bin\\1cv8.exe'],
+    )
+    monkeypatch.setattr(
+        desktop_bridge,
+        'discover_infobases',
+        lambda: calls.append('bases') or [{'name': 'Demo', 'connection': '/F "C:\\Demo"', 'file_path': 'C:\\Demo'}],
+    )
+
+    platform_result = service.discover_platforms()
+    assert calls == ['platforms']
+    assert platform_result['executables']
+
+    calls.clear()
+    base_result = service.discover_bases()
+    assert calls == ['bases']
+    assert base_result['infobases'][0]['name'] == 'Demo'
+
+
+def test_doctor_counts_sources_without_reading_contents(service, monkeypatch) -> None:
+    def fail_source_texts():
+        raise AssertionError('doctor must not read all source contents')
+
+    monkeypatch.setattr(service.workspace, 'source_texts', fail_source_texts)
+    status = service.doctor()
+
+    assert status['source_count'] >= 1
