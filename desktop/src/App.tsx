@@ -359,7 +359,7 @@ export default function App() {
       </div>
       <SkillsPanel />
             <details className="advanced-settings"><summary>Дополнительно: COM, сертификат, UI-тесты</summary><div className="settings-grid">
-        {field('gigachat_ca_bundle', 'CA-сертификат GigaChat (PEM)', 'Путь к файлу сертификата')}
+        {field('gigachat_ca_bundle', 'Доп. CA-сертификат GigaChat (PEM/CRT)', 'Обычно не нужен: используется хранилище сертификатов Windows')}
         {field('onec_com_connection', 'COM connection string', 'File="C:\\1C\\dev";')}
         {field('onec_test_manager_connection', 'База Test Manager', '/F "C:\\1C\\test-manager"')}
         {field('onec_test_manager_user', 'Пользователь Test Manager', '')}
