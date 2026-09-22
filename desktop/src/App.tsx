@@ -41,8 +41,10 @@ const settingFields = [
   ['onec_workspace', 'Папка исходников', 'C:\\1C-Harness\\my-project'],
   ['onec_ib_connection', 'Основная база', '/F "C:\\1C\\dev" или /S "server\\base"'],
   ['onec_staging_ib_connection', 'Отдельная тестовая база', '/F "C:\\1C\\staging"'],
-  ['onec_user', 'Пользователь 1С', 'Имя пользователя'],
-  ['onec_password', 'Пароль 1С', ''],
+  ['onec_user', 'Пользователь рабочей ИБ', 'Точное имя пользователя в 1С'],
+  ['onec_password', 'Пароль рабочей ИБ', ''],
+  ['onec_staging_user', 'Пользователь staging ИБ', 'Обычно пусто для auto-sandbox'],
+  ['onec_staging_password', 'Пароль staging ИБ', ''],
 ];
 
 type ThemeMode = 'system' | 'light' | 'dark';
@@ -316,7 +318,7 @@ export default function App() {
     {applyOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="apply-title"><h2 id="apply-title">Применить изменения в основной базе?</h2><p className="settings-intro">Приложение создаст резервную копию .dt, загрузит проверенные исходники и обновит конфигурацию базы данных. Завершите другие сеансы работы с этой базой. При ошибке путь к резервной копии появится в сообщении.</p><div className="settings-actions"><button className="reject-button" disabled={busy} onClick={() => setApplyOpen(false)}>Отмена</button><button className="accept-button" disabled={busy} onClick={() => { setApplyOpen(false); void action(async () => { const result = await request<Session>('apply', {confirmed: true}); setSession(result); setNotice(`Применено. Резервная копия: ${result.backup}`); }); }}>Создать копию и применить</button></div></section></div>}
     {settingsOpen && <div className="modal-backdrop"><section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div className="settings-heading"><h2 id="settings-title">Подключение</h2><button className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={() => setSettingsOpen(false)}><X size={20}/></button></div>
-      <p className="settings-intro">Настройте модель и 1С здесь. Для проверок используйте отдельную копию базы. Принятие правок сохраняет исходники; основная база автоматически не обновляется.</p>
+      <p className="settings-intro">Настройте модель и 1С здесь. Если рабочая база требует вход, укажите точное имя пользователя ИБ и пароль. Auto-sandbox использует отдельную аутентификацию и не наследует пароль рабочей базы.</p>
       <label className="theme-setting"><span>Тема интерфейса</span>
         <select value={themeMode} onChange={event => setThemeMode(event.target.value as ThemeMode)}>
           <option value="system">Как в Windows</option>
