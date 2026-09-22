@@ -10,13 +10,14 @@ from onec_harness.settings import Settings
 
 SECRET_FIELDS = {
     'llm_api_key', 'gigachat_credentials', 'anthropic_api_key', 'onec_password',
-    'onec_test_manager_password', 'onec_com_connection',
+    'onec_staging_password', 'onec_test_manager_password', 'onec_com_connection',
 }
 EDITABLE = {
     'llm_provider', 'llm_model', 'llm_api_key', 'gigachat_credentials', 'gigachat_scope',
     'anthropic_api_key', 'openai_compatible_base_url', 'gigachat_ca_bundle', 'onec_exe',
     'onec_workspace', 'onec_ib_connection', 'onec_staging_ib_connection', 'onec_user', 'onec_password',
-    'onec_com_connection', 'onec_test_manager_connection', 'onec_test_manager_user', 'onec_test_manager_password',
+    'onec_staging_user', 'onec_staging_password', 'onec_com_connection',
+    'onec_test_manager_connection', 'onec_test_manager_user', 'onec_test_manager_password',
 }
 
 
