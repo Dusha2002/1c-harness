@@ -40,7 +40,7 @@ class Designer:
         settings: Settings,
         *,
         connection_override: str | None = None,
-        use_primary_auth: bool = True,
+        auth_kind: str = "primary",
     ) -> None:
         self.settings = settings
         if settings.onec_exe is None:
@@ -52,8 +52,17 @@ class Designer:
                 raise DesignerError(str(exc)) from exc
         self.exe = settings.onec_exe.expanduser()
         self.connection = settings.onec_ib_connection if connection_override is None else connection_override
-        self.user = settings.onec_user if use_primary_auth else None
-        self.password = settings.onec_password if use_primary_auth else None
+        if auth_kind == "primary":
+            self.user = settings.onec_user
+            self.password = settings.onec_password
+        elif auth_kind == "staging":
+            self.user = settings.onec_staging_user
+            self.password = settings.onec_staging_password
+        elif auth_kind == "none":
+            self.user = None
+            self.password = None
+        else:
+            raise DesignerError(f"Unknown 1C authentication kind: {auth_kind}")
         if not self.connection.strip():
             raise DesignerError("1C infobase connection is not configured")
 
