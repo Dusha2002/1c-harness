@@ -367,8 +367,9 @@ def test_prepare_staging_creates_empty_sandbox_and_loads_config(service, monkeyp
     calls: list[tuple[str, str]] = []
 
     class FakeDesigner:
-        def __init__(self, settings, connection_override=None):
+        def __init__(self, settings, connection_override=None, auth_kind="primary"):
             self.connection_override = connection_override
+            self.auth_kind = auth_kind
 
         def create_file_infobase(self, target, execute=False):
             calls.append(('create', str(target)))
@@ -401,3 +402,22 @@ def test_runtime_data_access_stays_on_primary_connection(service) -> None:
 
     assert 'UserData' in connection
     assert 'Sandbox' not in connection
+
+
+def test_staging_password_is_secret_and_roundtrips(service) -> None:
+    write_config({'onec_staging_user': 'SandboxUser', 'onec_staging_password': 'sandbox-secret'})
+    public = public_config()
+
+    assert public['values']['onec_staging_user'] == 'SandboxUser'
+    assert public['secrets']['onec_staging_password'] is True
+    assert 'sandbox-secret' not in json.dumps(public)
+
+
+def test_friendly_onec_auth_error_points_to_primary_credentials() -> None:
+    message = desktop_bridge._friendly_onec_error(
+        'Пользователь ИБ не идентифицирован',
+        target='primary',
+    )
+
+    assert 'Пользователь ИБ' in message
+    assert 'пароль' in message
