@@ -28,9 +28,6 @@ function fileConnection(path: string) {
   return `/F "${path}"`;
 }
 
-function stagingTarget(path: string) {
-  return path.replace(/[\\/]+$/, '') + '-harness-staging';
-}
 
 export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   const [step, setStep] = useState(0);
@@ -38,7 +35,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   const [discovery, setDiscovery] = useState<DiscoveryResult>({ executables: [], infobases: [], suggested_workspace: '' });
   const [form, setForm] = useState<Record<string, string | null>>({});
   const [selectedBase, setSelectedBase] = useState<DiscoveredInfobase | null>(null);
-  const [autoStaging, setAutoStaging] = useState(true);
+  const [autoSandbox, setAutoSandbox] = useState(true);
   const [busy, setBusy] = useState(true);
   const [platformScanBusy, setPlatformScanBusy] = useState(false);
   const [baseScanBusy, setBaseScanBusy] = useState(false);
@@ -130,10 +127,10 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   const hasSecret = Boolean(form[secretKey]) || Boolean(settings?.secrets[secretKey]);
   const canContinue = useMemo(() => {
     if (step === 0) return Boolean(form.onec_exe);
-    if (step === 1) return Boolean(form.onec_ib_connection) && (autoStaging ? Boolean(selectedBase?.file_path) : Boolean(form.onec_staging_ib_connection));
+    if (step === 1) return Boolean(form.onec_ib_connection) && (autoSandbox || Boolean(form.onec_staging_ib_connection));
     if (step === 2) return Boolean(form.llm_provider && form.llm_model && hasSecret);
     return Boolean(form.onec_workspace);
-  }, [step, form, autoStaging, selectedBase, hasSecret]);
+  }, [step, form, autoSandbox, hasSecret]);
 
   function setValue(key: string, value: string | null) {
     setForm(current => ({ ...current, [key]: value || null }));
@@ -142,7 +139,6 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   function chooseBase(base: DiscoveredInfobase) {
     setSelectedBase(base);
     setValue('onec_ib_connection', base.connection);
-    if (base.file_path && !form.onec_staging_ib_connection) setAutoStaging(true);
   }
 
   async function browseExe() {
@@ -171,20 +167,20 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       setProgress('Сохраняю подключение…');
       await request('save_settings', { values: next });
 
-      if (autoStaging && selectedBase?.file_path) {
-        const target = stagingTarget(selectedBase.file_path);
-        setProgress('Создаю безопасную staging-копию базы…');
-        const created = await request<{connection: string; path: string}>('prepare_staging', { target });
-        next.onec_staging_ib_connection = created.connection;
-        await request('save_settings', { values: { onec_staging_ib_connection: created.connection } });
-      }
-
       setProgress('Проверяю AI-модель…');
       await request('test_model');
 
-      setProgress('Выгружаю конфигурацию 1С…');
-      const doctor = await request<HarnessDoctor>('export');
+      setProgress('Выгружаю конфигурацию основной базы…');
+      await request<HarnessDoctor>('export');
+
+      if (autoSandbox) {
+        setProgress('Создаю чистую sandbox-базу для проверок…');
+        const created = await request<{connection: string; path: string}>('prepare_staging');
+        next.onec_staging_ib_connection = created.connection;
+      }
+
       setProgress('Готово');
+      const doctor = await request<HarnessDoctor>('doctor');
       onComplete(doctor);
     } catch (reason) {
       setError(String(reason));
@@ -236,7 +232,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
         </div>}
 
         {step === 1 && <div className="setup-section">
-          <div className="setup-copy"><h2>Выбери рабочую базу</h2><p>Основная база не используется для автономных проверок. Для них нужна отдельная staging-копия.</p></div>
+          <div className="setup-copy"><h2>Выбери рабочую базу</h2><p>Harness читает реальные данные этой базы только на чтение. Изменённый код проверяется отдельно, чтобы не рисковать рабочими данными.</p></div>
           <button className="setup-scan-button" disabled={baseScanBusy} onClick={() => void scanBases(form.onec_ib_connection)}>
             {baseScanBusy ? <LoaderCircle className="spin" size={15}/> : <Database size={15}/>}
             {baseScanBusy ? 'Ищу зарегистрированные базы…' : discovery.infobases.length ? 'Найти базы снова' : 'Найти зарегистрированные базы'}
@@ -249,19 +245,18 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
           <div className="setup-path-row"><label><span>Основная база</span><input value={form.onec_ib_connection ?? ''} onChange={e => { setSelectedBase(null); setValue('onec_ib_connection', e.target.value); }}/></label>
             <button className="setup-browse" onClick={() => void browseBase()}><FolderOpen size={15}/>Папка базы</button></div>
 
-          {selectedBase?.file_path && <div className="setup-staging-card"><div><strong><ShieldCheck size={16}/> Создать staging автоматически</strong>
-            <p>Закрой сеансы этой файловой базы. Harness скопирует её в <b>{stagingTarget(selectedBase.file_path)}</b>.</p></div>
-            <input type="checkbox" checked={autoStaging} onChange={e => setAutoStaging(e.target.checked)}/></div>}
+          <div className="setup-staging-card"><div><strong><ShieldCheck size={16}/> Создать чистую sandbox-базу автоматически</strong>
+            <p>Рекомендуется. Harness не копирует рабочие данные: реальные данные читаются из основной базы, а sandbox используется только для безопасной проверки изменённой конфигурации.</p></div>
+            <input type="checkbox" checked={autoSandbox} onChange={e => setAutoSandbox(e.target.checked)}/></div>
 
-          {!autoStaging && <label className="setup-field"><span>Отдельная staging-база</span>
+          {!autoSandbox && <label className="setup-field"><span>Использовать существующую тестовую базу</span>
             <select value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}>
               <option value="">Не выбрано</option>
               {discovery.infobases.filter(base => base.connection !== form.onec_ib_connection).map(base => <option key={base.connection} value={base.connection}>{base.name}</option>)}
             </select>
             <input placeholder='/F "C:\\1C\\staging" или /S "server\\staging"' value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}/>
           </label>}
-          {!selectedBase?.file_path && autoStaging && <div className="setup-warning">Для серверной или вручную указанной базы автоматическое копирование недоступно. Выбери существующую staging-базу.</div>}
-          {!selectedBase?.file_path && <button className="setup-secondary-inline" onClick={() => setAutoStaging(false)}>Выбрать staging вручную</button>}
+          <div className="setup-info">Реальные справочники, документы и регистры доступны AI через read-only COM. Запись данных в рабочую базу автономно отключена.</div>
         </div>}
 
         {step === 2 && <div className="setup-section">
@@ -284,7 +279,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
           <div className="setup-ready">
             <div><Check size={14}/><span>Платформа</span><strong>{form.onec_exe}</strong></div>
             <div><Check size={14}/><span>Основная база</span><strong>{selectedBase?.name ?? form.onec_ib_connection}</strong></div>
-            <div><Check size={14}/><span>Staging</span><strong>{autoStaging ? 'будет создана автоматически' : form.onec_staging_ib_connection}</strong></div>
+            <div><Check size={14}/><span>Sandbox</span><strong>{autoSandbox ? 'чистая база без копирования данных' : form.onec_staging_ib_connection}</strong></div>
             <div><Check size={14}/><span>AI</span><strong>{providerLabels[form.llm_provider ?? ''] ?? form.llm_provider} · {form.llm_model}</strong></div>
           </div>
           <div className="setup-path-row"><label><span>Рабочее пространство</span><input value={form.onec_workspace ?? ''} onChange={e => setValue('onec_workspace', e.target.value)}/></label>

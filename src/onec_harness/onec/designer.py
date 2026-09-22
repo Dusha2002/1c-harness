@@ -178,6 +178,51 @@ class Designer:
             target.parent.mkdir(parents=True, exist_ok=True)
         return self._run(["/DumpIB", str(target)], execute=execute)
 
+    def create_file_infobase(self, target: Path, *, execute: bool = False) -> CommandResult:
+        """Create an empty file infobase without touching the primary connection."""
+        target = target.expanduser().resolve()
+        command = [
+            str(self.exe),
+            "CREATEINFOBASE",
+            f'File="{target}"',
+            "/DisableStartupMessages",
+            "/DisableStartupDialogs",
+        ]
+        if not execute:
+            return CommandResult(command=command, returncode=None, executed=False)
+        if not self.exe.exists():
+            raise DesignerError(f"1C executable not found: {self.exe}")
+        target.mkdir(parents=True, exist_ok=True)
+        if (target / "1Cv8.1CD").exists():
+            raise DesignerError(f"Infobase already exists: {target}")
+
+        with tempfile.TemporaryDirectory(prefix="onec-harness-create-") as temp_dir:
+            log_path = Path(temp_dir) / "create-infobase.log"
+            command_with_log = [*command, "/Out", str(log_path)]
+            try:
+                result = subprocess.run(
+                    command_with_log,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=self.settings.onec_command_timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise DesignerError(
+                    f"1C infobase creation timed out after {self.settings.onec_command_timeout_seconds:g}s"
+                ) from exc
+            log = log_path.read_text(encoding="utf-8-sig", errors="replace") if log_path.exists() else ""
+            return CommandResult(
+                command=command_with_log,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                log=log,
+                executed=True,
+            )
+
     def check_modules(
         self,
         *,

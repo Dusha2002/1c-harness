@@ -51,3 +51,15 @@ def test_extension_checks_and_cfe_dump(tmp_path: Path) -> None:
         assert "МоеРасширение" in result.command
     assert "/CheckCanApplyConfigurationExtensions" in applicability.command
     assert "/DumpCfg" in cfe.command
+
+
+def test_create_file_infobase_command_is_isolated_from_primary_connection(tmp_path: Path) -> None:
+    designer = _designer(tmp_path)
+
+    result = designer.create_file_infobase(tmp_path / "sandbox")
+
+    assert result.executed is False
+    assert result.command[1] == "CREATEINFOBASE"
+    assert any(part.startswith('File="') for part in result.command)
+    assert "/F" not in result.command
+    assert "C:\\demo" not in result.command

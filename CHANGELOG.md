@@ -1,5 +1,10 @@
 # v0.5 development preview
 
+- Replaced raw filesystem copies of working 1C infobases with a clean local sandbox created by 1C itself.
+- Primary user data remains available to the agent through read-only COM runtime tools; autonomous data writes stay disabled.
+- Automatic sandbox setup now exports the primary configuration first, creates an empty file infobase, and loads/updates the configuration there.
+- Existing test copies can still be selected explicitly when changed code must be exercised against representative real data.
+
 - First-run setup now automatically scans for installed 1C and registered bases once; failed/interrupted scans can be retried manually.
 - Search buttons repaint immediately with independent spinners before the desktop bridge starts scanning.
 - Added system/light/dark themes with a quick top-bar toggle, persisted preference, Windows theme following and dark Monaco diff.

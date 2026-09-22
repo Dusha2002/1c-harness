@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
-import shutil
 import sys
 import uuid
 from dataclasses import asdict
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from onec_harness.agent import HarnessAgent
-from onec_harness.connections import connection_identity, file_connection_path, require_test_connection
+from onec_harness.connections import connection_identity, require_test_connection
 from onec_harness.desktop_config import config_root, load_settings, public_config, write_config
 from onec_harness.discovery import discover_infobases, discover_onec_executables
 from onec_harness.onec.com import ComConnector
@@ -92,31 +92,63 @@ class DesktopService:
         }
 
     def prepare_staging(self, target: str | None = None) -> dict:
-        source_value = file_connection_path(self.settings.onec_ib_connection)
-        if not source_value:
-            raise ValueError(
-                'Автоматическая staging-копия доступна для файловых баз /F. '
-                'Для серверной базы выберите отдельную staging-базу.'
-            )
-        source = Path(source_value)
-        if not source.is_dir():
-            raise ValueError(f'Папка основной файловой базы не найдена: {source}')
-        target_path = Path(target).expanduser() if target else source.with_name(source.name + '-harness-staging')
+        """Create/reuse an empty local sandbox and load the exported configuration into it.
+
+        Real business data stays in the user's primary infobase and remains available to
+        the agent through the read-only COM runtime. Staging exists only for validating
+        changed configuration code and therefore does not copy the user's data files.
+        """
+        if not self.settings.onec_ib_connection.strip():
+            raise ValueError('Сначала выберите основную базу 1С')
+        if self.workspace.source_count() == 0:
+            raise ValueError('Сначала выгрузите конфигурацию основной базы в рабочее пространство')
+
+        identity = connection_identity(self.settings.onec_ib_connection)
+        digest = hashlib.sha256(f'{identity[0]}:{identity[1]}'.encode()).hexdigest()[:12]
+        target_path = (
+            Path(target).expanduser().resolve()
+            if target
+            else (config_root() / 'staging' / digest).resolve()
+        )
         connection = f'/F "{target_path}"'
-        if target_path.exists():
-            configured = self.settings.onec_staging_ib_connection.strip()
-            if configured and connection_identity(configured) == connection_identity(connection):
-                return {'connection': connection, 'path': str(target_path), 'existing': True}
-            raise ValueError(f'Папка staging уже существует: {target_path}. Выберите другую папку.')
-        try:
-            shutil.copytree(source, target_path)
-        except OSError as exc:
-            if target_path.exists():
-                shutil.rmtree(target_path, ignore_errors=True)
-            raise ValueError(f'Не удалось создать staging-копию: {exc}') from exc
         require_test_connection(self.settings.onec_ib_connection, connection)
+
+        database_file = target_path / '1Cv8.1CD'
+        existing = database_file.exists()
+        if target_path.exists() and not existing:
+            try:
+                nonempty = any(target_path.iterdir())
+            except OSError as exc:
+                raise ValueError(f'Не удалось проверить папку sandbox: {exc}') from exc
+            if nonempty:
+                raise ValueError(
+                    f'Папка sandbox занята посторонними файлами: {target_path}. '
+                    'Выберите другой путь в расширенных настройках.'
+                )
+
+        if not existing:
+            created = Designer(self.settings).create_file_infobase(target_path, execute=True)
+            if not created.ok:
+                raise ValueError(created.combined_output() or '1С не смогла создать пустую sandbox-базу')
+            if not database_file.exists():
+                raise ValueError('1С завершила создание без ошибки, но файл sandbox-базы 1Cv8.1CD не найден')
+
+        staged = Designer(self.settings, connection_override=connection).load_config(
+            self.workspace.root,
+            execute=True,
+            update_db=True,
+        )
+        if not staged.ok:
+            raise ValueError(staged.combined_output() or 'Не удалось загрузить конфигурацию в sandbox-базу')
+
         write_config({'onec_staging_ib_connection': connection})
-        return {'connection': connection, 'path': str(target_path)}
+        return {
+            'connection': connection,
+            'path': str(target_path),
+            'existing': existing,
+            'mode': 'empty_sandbox',
+            'primary_data_access': 'read_only',
+        }
 
     def skill_list(self) -> list[dict[str, Any]]:
         return [asdict(item) for item in self.skills.list()]
