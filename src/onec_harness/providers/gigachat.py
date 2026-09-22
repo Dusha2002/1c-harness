@@ -25,6 +25,7 @@ class GigaChatProvider:
         self.settings = settings
         self._access_token: str | None = None
         self._expires_at = 0.0
+        self._resolved_scope: str | None = None
 
     def _system_ssl_context(self) -> ssl.SSLContext:
         if sys.platform == "win32":
@@ -62,6 +63,42 @@ class GigaChatProvider:
             raise ProviderError(f"Could not load GigaChat CA certificates: {exc}") from exc
         return context
 
+    @staticmethod
+    def _normalized_credentials(raw: str) -> str:
+        value = raw.strip().strip('"').strip("'")
+        lowered = value.casefold()
+        if lowered.startswith("basic "):
+            value = value[6:]
+        elif lowered.startswith("bearer "):
+            value = value[7:]
+        # Authorization keys are Base64-like strings and should not contain
+        # whitespace; this also fixes keys copied with an accidental newline.
+        return "".join(value.split())
+
+    @staticmethod
+    def _oauth_error_payload(response: httpx.Response) -> tuple[int | None, str]:
+        try:
+            payload = response.json()
+        except ValueError:
+            text = response.text.strip()
+            return None, text[:500] or response.reason_phrase
+        if isinstance(payload, dict):
+            code = payload.get("code")
+            try:
+                numeric_code = int(code) if code is not None else None
+            except (TypeError, ValueError):
+                numeric_code = None
+            message = str(payload.get("message") or payload.get("error") or payload)
+            return numeric_code, message[:500]
+        return None, str(payload)[:500]
+
+    def _scope_candidates(self) -> list[str]:
+        allowed = ["GIGACHAT_API_PERS", "GIGACHAT_API_B2B", "GIGACHAT_API_CORP"]
+        configured = self.settings.gigachat_scope.strip().upper()
+        if configured in allowed:
+            return [configured, *[scope for scope in allowed if scope != configured]]
+        return allowed
+
     def _tls_error(self, operation: str, exc: httpx.HTTPError) -> ProviderError:
         message = str(exc)
         if "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify failed" in message.casefold():
@@ -83,39 +120,71 @@ class GigaChatProvider:
         if self._access_token and time.time() < self._expires_at - 30:
             return self._access_token
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "RqUID": str(uuid4()),
-            "Authorization": f"Basic {self.settings.gigachat_credentials}",
-            "User-Agent": "onec-harness/0.1.0",
-        }
+        credentials = self._normalized_credentials(self.settings.gigachat_credentials or "")
+        if not credentials:
+            raise ProviderError("GigaChat Authorization Key is empty")
+
+        scopes = [self._resolved_scope] if self._resolved_scope else self._scope_candidates()
+        last_error: tuple[int | None, str, int, str] | None = None
+
         try:
             async with httpx.AsyncClient(
                 timeout=self.settings.llm_timeout_seconds,
                 verify=self._verify(),
             ) as client:
-                response = await client.post(
-                    self.settings.gigachat_auth_url,
-                    headers=headers,
-                    data={"scope": self.settings.gigachat_scope},
-                )
-                response.raise_for_status()
-                payload = response.json()
+                for scope in scopes:
+                    headers = {
+                        "Accept": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "RqUID": str(uuid4()),
+                        "Authorization": f"Basic {credentials}",
+                        "User-Agent": "onec-harness/0.5.0",
+                    }
+                    response = await client.post(
+                        self.settings.gigachat_auth_url,
+                        headers=headers,
+                        data={"scope": scope},
+                    )
+                    if response.is_success:
+                        payload = response.json()
+                        token = payload.get("access_token")
+                        if not token:
+                            raise ProviderError("GigaChat OAuth response does not contain access_token")
+                        expires_at = float(payload.get("expires_at") or (time.time() + 25 * 60))
+                        if expires_at > 10_000_000_000:
+                            expires_at /= 1000
+                        self._access_token = token
+                        self._expires_at = expires_at
+                        self._resolved_scope = scope
+                        return token
+
+                    code, message = self._oauth_error_payload(response)
+                    last_error = (code, message, response.status_code, scope)
+
+                    # Official GigaChat errors 7/6 indicate a mismatch between
+                    # Authorization Key and scope. Try the other documented API
+                    # scopes automatically so personal/business users do not
+                    # need to know this detail during setup.
+                    if code in {6, 7}:
+                        continue
+                    break
         except httpx.HTTPError as exc:
             raise self._tls_error("GigaChat OAuth failed", exc) from exc
 
-        token = payload.get("access_token")
-        if not token:
-            raise ProviderError("GigaChat OAuth response does not contain access_token")
+        if last_error is None:
+            raise ProviderError("GigaChat OAuth failed without a response")
 
-        expires_at = float(payload.get("expires_at") or (time.time() + 25 * 60))
-        # Some API versions serialize epoch milliseconds, others epoch seconds.
-        if expires_at > 10_000_000_000:
-            expires_at /= 1000
-        self._access_token = token
-        self._expires_at = expires_at
-        return token
+        code, message, status, scope = last_error
+        detail = f"code={code}, message={message}" if code is not None else message
+        if code == 4:
+            detail += ". Проверьте Authorization Key: Harness принимает как сам ключ, так и строку с префиксом Basic."
+        elif code in {6, 7}:
+            detail += ". Ключ не подошёл ни к PERS, ни к B2B, ни к CORP; возможно, он устарел или перевыпущен."
+        elif code in {1, 5}:
+            detail += ". Проверьте тип API/scope в личном кабинете GigaChat."
+        raise ProviderError(
+            f"GigaChat OAuth failed: HTTP {status}; {detail}; last scope={scope}"
+        )
 
     async def complete(self, messages: list[Message]) -> LLMResponse:
         token = await self._get_access_token()
