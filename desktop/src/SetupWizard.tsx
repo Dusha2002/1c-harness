@@ -40,6 +40,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
   const [platformScanBusy, setPlatformScanBusy] = useState(false);
   const [baseScanBusy, setBaseScanBusy] = useState(false);
   const [progress, setProgress] = useState('');
+  const [exportCancelable, setExportCancelable] = useState(false);
   const [error, setError] = useState('');
 
   const nextPaint = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -159,6 +160,15 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
     if (path) setValue('onec_workspace', path);
   }
 
+  async function cancelExport() {
+    setProgress('Останавливаю выгрузку 1С…');
+    try {
+      await request('cancel');
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function finish() {
     if (!canContinue || busy) return;
     setBusy(true); setError('');
@@ -170,8 +180,18 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       setProgress('Проверяю AI-модель…');
       await request('test_model');
 
-      setProgress('Выгружаю конфигурацию основной базы…');
-      await request<HarnessDoctor>('export');
+      setProgress('Проверяю вход в рабочую базу 1С…');
+      await request('test_onec_connection');
+
+      setProgress('Запускаю выгрузку конфигурации…');
+      setExportCancelable(true);
+      try {
+        await request<HarnessDoctor>('export', {}, event => {
+          if (event.operation === 'export' && event.message) setProgress(event.message);
+        });
+      } finally {
+        setExportCancelable(false);
+      }
 
       if (autoSandbox) {
         setProgress('Создаю чистую sandbox-базу для проверок…');
@@ -299,7 +319,7 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
         </div>}
 
         {step === 3 && <div className="setup-section">
-          <div className="setup-copy"><h2>Остался один клик</h2><p>Harness сохранит настройки, подготовит staging, проверит модель и выгрузит исходники конфигурации.</p></div>
+          <div className="setup-copy"><h2>Остался один клик</h2><p>Harness проверит модель и вход в 1С, затем выгрузит конфигурацию. Для большой УНФ это может занять несколько минут — прогресс будет виден здесь.</p></div>
           <div className="setup-ready">
             <div><Check size={14}/><span>Платформа</span><strong>{form.onec_exe}</strong></div>
             <div><Check size={14}/><span>Основная база</span><strong>{selectedBase?.name ?? form.onec_ib_connection}</strong></div>
@@ -314,7 +334,9 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
       </div>
 
       <footer className="setup-footer">
-        <button className="setup-secondary" disabled={step === 0 || busy} onClick={() => setStep(s => Math.max(0, s - 1))}><ChevronLeft size={15}/>Назад</button>
+        {exportCancelable
+          ? <button className="setup-secondary" onClick={() => void cancelExport()}>Отменить выгрузку</button>
+          : <button className="setup-secondary" disabled={step === 0 || busy} onClick={() => setStep(s => Math.max(0, s - 1))}><ChevronLeft size={15}/>Назад</button>}
         {step < 3
           ? <button className="setup-primary" disabled={!canContinue || busy} onClick={() => setStep(s => s + 1)}>Продолжить<ChevronRight size={15}/></button>
           : <button className="setup-primary" disabled={!canContinue || busy} onClick={() => void finish()}>{busy ? <LoaderCircle className="spin" size={16}/> : <Sparkles size={16}/>}Настроить и начать</button>}
