@@ -732,3 +732,19 @@ html[data-theme="dark"] .suggested-path {
   border-color: #2f373f;
   color: #aab3bc;
 }
+
+
+.setup-info {
+  padding: 11px 13px;
+  border: 1px solid #dce7e2;
+  border-radius: 10px;
+  background: #f7faf8;
+  color: #6f7d76;
+  font-size: 10px;
+  line-height: 1.55;
+}
+html[data-theme="dark"] .setup-info {
+  background: #161d1a;
+  border-color: #2a3a33;
+  color: #95a39c;
+}
