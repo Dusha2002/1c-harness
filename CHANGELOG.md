@@ -1,5 +1,8 @@
 # v0.5 development preview
 
+- GigaChat HTTPS now uses the native Windows certificate trust store by default, fixing self-signed-chain failures caused by trusted antivirus/corporate TLS interception and Windows-only root CAs.
+- Custom GigaChat PEM/CRT CA bundles still take precedence; TLS verification is never disabled automatically.
+
 - Replaced raw filesystem copies of working 1C infobases with a clean local sandbox created by 1C itself.
 - Primary user data remains available to the agent through read-only COM runtime tools; autonomous data writes stay disabled.
 - Automatic sandbox setup now exports the primary configuration first, creates an empty file infobase, and loads/updates the configuration there.
