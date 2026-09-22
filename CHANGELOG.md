@@ -1,5 +1,10 @@
 # v0.5 development preview
 
+- Long 1C configuration exports now stream elapsed time and exported file counts to the setup UI instead of appearing frozen.
+- First-run export can be cancelled; the 1C process is terminated cleanly and partial exports stay outside the real workspace.
+- Harness now validates the primary COM connection before starting the expensive source export, so infobase login errors fail fast.
+- Interrupted first-run exports in the app-owned default workspace can be replaced safely after a later successful export.
+
 - Added explicit primary infobase user/password fields to first-run setup and separate staging credentials.
 - Designer, checks, Test Client and E2E now keep primary and staging authentication isolated; auto-sandbox no longer inherits the working database user.
 - The common 1C error “Пользователь ИБ не идентифицирован” is translated into actionable setup guidance.
