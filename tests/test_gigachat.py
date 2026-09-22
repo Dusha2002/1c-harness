@@ -1,10 +1,16 @@
+import hashlib
 import ssl
 import sys
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from onec_harness.providers.gigachat import GigaChatProvider
+from onec_harness.providers.russian_trusted_ca import (
+    RUSSIAN_TRUSTED_ROOT_CA_PEM,
+    RUSSIAN_TRUSTED_ROOT_CA_SHA256,
+)
 from onec_harness.settings import Settings
 
 
@@ -13,11 +19,36 @@ def provider(**kwargs) -> GigaChatProvider:
     return GigaChatProvider(settings)
 
 
-def test_custom_ca_bundle_has_priority(tmp_path) -> None:
-    bundle = tmp_path / "corp-root.pem"
-    bundle.write_text("dummy", encoding="utf-8")
+def test_bundled_root_has_pinned_fingerprint() -> None:
+    der = ssl.PEM_cert_to_DER_cert(RUSSIAN_TRUSTED_ROOT_CA_PEM)
 
-    assert provider(gigachat_ca_bundle=bundle)._verify() == str(bundle)
+    assert hashlib.sha256(der).hexdigest() == RUSSIAN_TRUSTED_ROOT_CA_SHA256
+    assert RUSSIAN_TRUSTED_ROOT_CA_SHA256 == (
+        "d26d2d0231b7c39f92cc738512ba54103519e4405d68b5bd703e9788ca8ecf31"
+    )
+
+
+def test_verify_loads_bundled_root(monkeypatch) -> None:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client = provider()
+    monkeypatch.setattr(client, "_system_ssl_context", lambda: context)
+
+    assert client._verify() is context
+    fingerprints = {
+        hashlib.sha256(cert).hexdigest()
+        for cert in context.get_ca_certs(binary_form=True)
+    }
+    assert RUSSIAN_TRUSTED_ROOT_CA_SHA256 in fingerprints
+
+
+def test_custom_ca_bundle_is_added_to_context(tmp_path, monkeypatch) -> None:
+    bundle = tmp_path / "extra-root.pem"
+    bundle.write_text(RUSSIAN_TRUSTED_ROOT_CA_PEM, encoding="utf-8")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client = provider(gigachat_ca_bundle=bundle)
+    monkeypatch.setattr(client, "_system_ssl_context", lambda: context)
+
+    assert client._verify() is context
 
 
 def test_ssl_verification_can_still_be_explicitly_disabled() -> None:
@@ -25,7 +56,7 @@ def test_ssl_verification_can_still_be_explicitly_disabled() -> None:
 
 
 def test_windows_uses_native_truststore(monkeypatch) -> None:
-    marker = ssl.create_default_context()
+    marker = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     fake = SimpleNamespace(SSLContext=lambda protocol: marker)
     monkeypatch.setitem(sys.modules, "truststore", fake)
     monkeypatch.setattr("onec_harness.providers.gigachat.sys.platform", "win32")
@@ -42,6 +73,13 @@ def test_windows_tls_error_is_actionable(monkeypatch) -> None:
 
     message = str(provider()._tls_error("GigaChat OAuth failed", error))
 
-    assert "Windows system trust store" in message
-    assert "Trusted Root Certification Authorities" in message
+    assert "Russian Trusted Root CA" in message
+    assert "Windows trust store" in message
     assert "not disabled automatically" in message
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows truststore integration")
+def test_real_windows_truststore_accepts_bundled_root() -> None:
+    context = provider()._verify()
+
+    assert context is not False

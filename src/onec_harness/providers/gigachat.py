@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ssl
 import sys
 import time
@@ -8,6 +9,10 @@ from uuid import uuid4
 import httpx
 
 from onec_harness.providers.base import LLMResponse, Message, ProviderError
+from onec_harness.providers.russian_trusted_ca import (
+    RUSSIAN_TRUSTED_ROOT_CA_PEM,
+    RUSSIAN_TRUSTED_ROOT_CA_SHA256,
+)
 from onec_harness.settings import Settings
 
 
@@ -21,31 +26,51 @@ class GigaChatProvider:
         self._access_token: str | None = None
         self._expires_at = 0.0
 
-    def _verify(self) -> bool | str | ssl.SSLContext:
-        if self.settings.gigachat_ca_bundle:
-            return str(self.settings.gigachat_ca_bundle)
-        if not self.settings.gigachat_verify_ssl:
-            return False
+    def _system_ssl_context(self) -> ssl.SSLContext:
         if sys.platform == "win32":
             try:
                 import truststore
-            except ImportError as exc:
-                raise ProviderError(
-                    "Windows system certificate support is unavailable in this build. "
-                    "Reinstall the current 1C Harness build or configure a GigaChat CA bundle."
-                ) from exc
+            except ImportError:
+                return ssl.create_default_context()
             return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        return True
+        return ssl.create_default_context()
+
+    @staticmethod
+    def _verified_official_root() -> str:
+        try:
+            der = ssl.PEM_cert_to_DER_cert(RUSSIAN_TRUSTED_ROOT_CA_PEM)
+        except ValueError as exc:
+            raise ProviderError("Bundled GigaChat root CA is malformed") from exc
+        digest = hashlib.sha256(der).hexdigest()
+        if digest != RUSSIAN_TRUSTED_ROOT_CA_SHA256:
+            raise ProviderError("Bundled GigaChat root CA fingerprint mismatch")
+        return RUSSIAN_TRUSTED_ROOT_CA_PEM
+
+    def _verify(self) -> bool | ssl.SSLContext:
+        if not self.settings.gigachat_verify_ssl:
+            return False
+
+        context = self._system_ssl_context()
+        try:
+            # GigaChat officially requires the Russian Trusted Root CA. Load the
+            # pinned root at application level so users do not need to install it
+            # machine-wide just to use Harness.
+            context.load_verify_locations(cadata=self._verified_official_root())
+            if self.settings.gigachat_ca_bundle:
+                context.load_verify_locations(cafile=str(self.settings.gigachat_ca_bundle))
+        except (OSError, ssl.SSLError) as exc:
+            raise ProviderError(f"Could not load GigaChat CA certificates: {exc}") from exc
+        return context
 
     def _tls_error(self, operation: str, exc: httpx.HTTPError) -> ProviderError:
         message = str(exc)
         if "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify failed" in message.casefold():
             if sys.platform == "win32" and not self.settings.gigachat_ca_bundle:
                 return ProviderError(
-                    f"{operation}: TLS certificate verification failed even with the Windows system trust store. "
-                    "If your browser works through an antivirus, proxy or corporate network, install its root certificate "
-                    "into the Windows Trusted Root Certification Authorities store or specify its PEM/CRT file in "
-                    "Advanced settings → GigaChat CA certificate. SSL verification is intentionally not disabled automatically. "
+                    f"{operation}: TLS verification failed after loading both the Windows trust store and the pinned "
+                    "Russian Trusted Root CA required by GigaChat. This usually means HTTPS interception by an antivirus, "
+                    "proxy or corporate network. Add that interceptor's root PEM/CRT in Advanced settings → GigaChat CA "
+                    "certificate. SSL verification is intentionally not disabled automatically. "
                     f"Original error: {exc}"
                 )
             return ProviderError(
