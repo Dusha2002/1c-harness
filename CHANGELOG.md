@@ -1,5 +1,9 @@
 # v0.5 development preview
 
+- GigaChat OAuth now normalizes pasted Authorization Keys, including accidental `Basic `/`Bearer ` prefixes and whitespace.
+- OAuth errors now include GigaChat's own code/message instead of a generic HTTP 400.
+- Scope mismatches automatically retry the documented PERS/B2B/CORP scopes; setup/settings also expose the scope explicitly.
+
 - Bundled and fingerprint-pinned the official Russian Trusted Root CA required by GigaChat, so users do not need to install it into Windows manually.
 - GigaChat TLS now combines the Windows system trust store, the pinned Ministry root, and any optional user-supplied CA bundle while keeping certificate verification enabled.
 

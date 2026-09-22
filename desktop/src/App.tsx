@@ -354,6 +354,13 @@ export default function App() {
       </div>
       <div className="settings-grid"><label className="settings-field"><span>Провайдер ИИ</span><select value={form.llm_provider ?? 'gigachat'} onChange={event => changeField('llm_provider', event.target.value)}>{['gigachat','openai','deepseek','anthropic','openai_compatible'].map(provider => <option key={provider} value={provider}>{provider}</option>)}</select></label>
         {field(secretKey, form.llm_provider === 'gigachat' ? 'Authorization Key GigaChat' : 'API-ключ', '')}
+        {form.llm_provider === 'gigachat' && <label className="settings-field"><span>Тип доступа GigaChat</span>
+          <select value={form.gigachat_scope ?? 'GIGACHAT_API_PERS'} onChange={event => changeField('gigachat_scope', event.target.value)}>
+            <option value="GIGACHAT_API_PERS">Физлицо · PERS</option>
+            <option value="GIGACHAT_API_B2B">ИП/юрлицо · B2B</option>
+            <option value="GIGACHAT_API_CORP">ИП/юрлицо · CORP</option>
+          </select>
+        </label>}
         {settingFields.map(([key, title, placeholder]) => field(key, title, placeholder))}
         {form.llm_provider === 'openai_compatible' && field('openai_compatible_base_url', 'API Base URL', 'https://provider.example/v1')}
       </div>

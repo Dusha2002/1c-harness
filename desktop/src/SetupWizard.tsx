@@ -271,6 +271,14 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
           <label className="setup-field"><span>{form.llm_provider === 'gigachat' ? 'Authorization Key GigaChat' : 'API-ключ'}</span>
             <input type="password" autoComplete="off" placeholder={settings.secrets[secretKey] ? 'Ключ уже сохранён' : 'Вставь ключ'} value={form[secretKey] ?? ''} onChange={e => setValue(secretKey, e.target.value)}/>
           </label>
+          {form.llm_provider === 'gigachat' && <label className="setup-field"><span>Тип доступа GigaChat</span>
+            <select value={form.gigachat_scope ?? 'GIGACHAT_API_PERS'} onChange={e => setValue('gigachat_scope', e.target.value)}>
+              <option value="GIGACHAT_API_PERS">Физлицо · PERS</option>
+              <option value="GIGACHAT_API_B2B">ИП/юрлицо · B2B</option>
+              <option value="GIGACHAT_API_CORP">ИП/юрлицо · CORP</option>
+            </select>
+            <small>Если выбран не тот тип, Harness автоматически попробует остальные официальные scope.</small>
+          </label>}
           {form.llm_provider === 'openai_compatible' && <label className="setup-field"><span>API Base URL</span><input value={form.openai_compatible_base_url ?? ''} onChange={e => setValue('openai_compatible_base_url', e.target.value)}/></label>}
         </div>}
 
