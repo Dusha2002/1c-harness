@@ -141,10 +141,7 @@ class DesktopService:
         if not staged.ok:
             raise ValueError(staged.combined_output() or 'Не удалось загрузить конфигурацию в sandbox-базу')
 
-        write_config({
-            'onec_staging_ib_connection': connection,
-            'onec_test_client_connection': connection,
-        })
+        write_config({'onec_staging_ib_connection': connection})
         return {
             'connection': connection,
             'path': str(target_path),
