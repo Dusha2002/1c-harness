@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,6 +94,94 @@ class Designer:
         command.extend(["/DisableStartupMessages", "/DisableStartupDialogs"])
         return command
 
+    @staticmethod
+    def _stop_process(process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    def _run_monitored(
+        self,
+        action: list[str],
+        *,
+        execute: bool,
+        progress: Callable[[float], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> CommandResult:
+        command = [*self._base_command(), *action]
+        if not execute:
+            return CommandResult(command=command, returncode=None, executed=False)
+        if not self.exe.exists():
+            raise DesignerError(f"1C executable not found: {self.exe}")
+
+        timeout = timeout_seconds or self.settings.onec_command_timeout_seconds
+        fatal_markers = (
+            "пользователь иб не идентифицирован",
+            "неверное имя или пароль",
+            "неверный пароль",
+        )
+        with tempfile.TemporaryDirectory(prefix="onec-harness-") as temp_dir:
+            root = Path(temp_dir)
+            log_path = root / "designer.log"
+            stdout_path = root / "stdout.log"
+            stderr_path = root / "stderr.log"
+            command_with_log = [*command, "/Out", str(log_path)]
+            started = time.monotonic()
+
+            with stdout_path.open("wb") as stdout_stream, stderr_path.open("wb") as stderr_stream:
+                process = subprocess.Popen(
+                    command_with_log,
+                    stdout=stdout_stream,
+                    stderr=stderr_stream,
+                )
+                try:
+                    next_progress = 0.0
+                    while process.poll() is None:
+                        elapsed = time.monotonic() - started
+                        if cancelled and cancelled():
+                            self._stop_process(process)
+                            raise DesignerError("Операция 1С отменена пользователем")
+                        if elapsed >= timeout:
+                            self._stop_process(process)
+                            raise DesignerError(f"1C Designer command timed out after {timeout:g}s")
+
+                        log = (
+                            log_path.read_text(encoding="utf-8-sig", errors="replace")
+                            if log_path.exists()
+                            else ""
+                        )
+                        if any(marker in log.casefold() for marker in fatal_markers):
+                            self._stop_process(process)
+                            break
+
+                        if progress and elapsed >= next_progress:
+                            progress(elapsed)
+                            next_progress = elapsed + 1.0
+                        time.sleep(0.2)
+                finally:
+                    if process.poll() is None:
+                        self._stop_process(process)
+
+            if progress:
+                progress(time.monotonic() - started)
+            stdout = stdout_path.read_bytes().decode("utf-8", errors="replace") if stdout_path.exists() else ""
+            stderr = stderr_path.read_bytes().decode("utf-8", errors="replace") if stderr_path.exists() else ""
+            log = log_path.read_text(encoding="utf-8-sig", errors="replace") if log_path.exists() else ""
+            return CommandResult(
+                command=command_with_log,
+                returncode=process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                log=log,
+                executed=True,
+            )
+
     def _run(self, action: list[str], *, execute: bool) -> CommandResult:
         command = [*self._base_command(), *action]
         if not execute:
@@ -133,11 +223,22 @@ class Designer:
         execute: bool = False,
         extension: str | None = None,
         all_extensions: bool = False,
+        progress: Callable[[float], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+        timeout_seconds: float | None = None,
     ) -> CommandResult:
         target = target.expanduser().resolve()
         if execute:
             target.mkdir(parents=True, exist_ok=True)
         action = ["/DumpConfigToFiles", str(target), *self._extension_args(extension, all_extensions=all_extensions)]
+        if progress is not None or cancelled is not None or timeout_seconds is not None:
+            return self._run_monitored(
+                action,
+                execute=execute,
+                progress=progress,
+                cancelled=cancelled,
+                timeout_seconds=timeout_seconds,
+            )
         return self._run(action, execute=execute)
 
     def load_config(
