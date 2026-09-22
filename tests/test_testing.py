@@ -47,3 +47,22 @@ def test_scenario_compiler_uses_logical_ui_objects() -> None:
     assert 'Type("TestedFormField")' in bsl
     assert 'InputText("Тест")' in bsl
     assert "Button.Click()" in bsl
+
+
+def test_test_client_uses_staging_credentials_not_primary(tmp_path: Path) -> None:
+    settings = Settings(
+        onec_exe=tmp_path / "1cv8.exe",
+        onec_ib_connection='/F "C:\\1c\\primary"',
+        onec_staging_ib_connection='/F "C:\\1c\\stage"',
+        onec_user="PrimaryUser",
+        onec_password="primary-secret",
+        onec_staging_user="StageUser",
+        onec_staging_password="stage-secret",
+    )
+
+    command = TestClientLauncher(settings).test_client_command()
+
+    assert "StageUser" in command
+    assert "stage-secret" in command
+    assert "PrimaryUser" not in command
+    assert "primary-secret" not in command
