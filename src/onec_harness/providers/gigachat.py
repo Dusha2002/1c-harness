@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ssl
+import sys
 import time
 from uuid import uuid4
 
@@ -19,10 +21,38 @@ class GigaChatProvider:
         self._access_token: str | None = None
         self._expires_at = 0.0
 
-    def _verify(self) -> bool | str:
+    def _verify(self) -> bool | str | ssl.SSLContext:
         if self.settings.gigachat_ca_bundle:
             return str(self.settings.gigachat_ca_bundle)
-        return self.settings.gigachat_verify_ssl
+        if not self.settings.gigachat_verify_ssl:
+            return False
+        if sys.platform == "win32":
+            try:
+                import truststore
+            except ImportError as exc:
+                raise ProviderError(
+                    "Windows system certificate support is unavailable in this build. "
+                    "Reinstall the current 1C Harness build or configure a GigaChat CA bundle."
+                ) from exc
+            return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        return True
+
+    def _tls_error(self, operation: str, exc: httpx.HTTPError) -> ProviderError:
+        message = str(exc)
+        if "CERTIFICATE_VERIFY_FAILED" in message or "certificate verify failed" in message.casefold():
+            if sys.platform == "win32" and not self.settings.gigachat_ca_bundle:
+                return ProviderError(
+                    f"{operation}: TLS certificate verification failed even with the Windows system trust store. "
+                    "If your browser works through an antivirus, proxy or corporate network, install its root certificate "
+                    "into the Windows Trusted Root Certification Authorities store or specify its PEM/CRT file in "
+                    "Advanced settings → GigaChat CA certificate. SSL verification is intentionally not disabled automatically. "
+                    f"Original error: {exc}"
+                )
+            return ProviderError(
+                f"{operation}: TLS certificate verification failed. Check the configured GigaChat CA certificate. "
+                f"Original error: {exc}"
+            )
+        return ProviderError(f"{operation}: {exc}")
 
     async def _get_access_token(self) -> str:
         if self._access_token and time.time() < self._expires_at - 30:
@@ -48,7 +78,7 @@ class GigaChatProvider:
                 response.raise_for_status()
                 payload = response.json()
         except httpx.HTTPError as exc:
-            raise ProviderError(f"GigaChat OAuth failed: {exc}") from exc
+            raise self._tls_error("GigaChat OAuth failed", exc) from exc
 
         token = payload.get("access_token")
         if not token:
@@ -85,7 +115,7 @@ class GigaChatProvider:
                 response.raise_for_status()
                 payload = response.json()
         except httpx.HTTPError as exc:
-            raise ProviderError(f"GigaChat completion failed: {exc}") from exc
+            raise self._tls_error("GigaChat completion failed", exc) from exc
 
         try:
             content = payload["choices"][0]["message"]["content"]
