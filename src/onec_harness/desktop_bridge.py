@@ -147,13 +147,13 @@ class DesktopService:
                 )
 
         if not existing:
-            created = Designer(self.settings, use_primary_auth=False).create_file_infobase(target_path, execute=True)
+            created = Designer(self.settings, auth_kind='none').create_file_infobase(target_path, execute=True)
             if not created.ok:
                 raise ValueError(_friendly_onec_error(created.combined_output(), target='staging'))
             if not database_file.exists():
                 raise ValueError('1С завершила создание без ошибки, но файл sandbox-базы 1Cv8.1CD не найден')
 
-        staged = Designer(self.settings, connection_override=connection, use_primary_auth=False).load_config(
+        staged = Designer(self.settings, connection_override=connection, auth_kind='staging').load_config(
             self.workspace.root,
             execute=True,
             update_db=True,
@@ -245,7 +245,7 @@ class DesktopService:
 
         harness = HarnessAgent(
             provider, self.workspace, allow_writes=True, execute_checks=check,
-            designer=Designer(s, connection_override=s.onec_staging_ib_connection, use_primary_auth=False) if check else None,
+            designer=Designer(s, connection_override=s.onec_staging_ib_connection, auth_kind='staging') if check else None,
             runtime=ComConnector(s), scenario_compiler=ScenarioCompiler(s.onec_test_host, s.onec_test_port),
             test_runner=TestManagerRunner(s, self.workspace) if request.get('ui_test') and check else None,
             execute_ui_tests=bool(request.get('ui_test') and check),
