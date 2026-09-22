@@ -245,17 +245,33 @@ export default function SetupWizard({ onComplete, onAdvanced }: Props) {
           <div className="setup-path-row"><label><span>Основная база</span><input value={form.onec_ib_connection ?? ''} onChange={e => { setSelectedBase(null); setValue('onec_ib_connection', e.target.value); }}/></label>
             <button className="setup-browse" onClick={() => void browseBase()}><FolderOpen size={15}/>Папка базы</button></div>
 
+          <div className="setup-auth-grid">
+            <label className="setup-field"><span>Пользователь ИБ</span>
+              <input autoComplete="username" placeholder="Оставьте пустым, если вход без пользователя" value={form.onec_user ?? ''} onChange={e => setValue('onec_user', e.target.value)}/>
+            </label>
+            <label className="setup-field"><span>Пароль ИБ</span>
+              <input type="password" autoComplete="current-password" placeholder={settings.secrets.onec_password ? 'Пароль уже сохранён' : 'Оставьте пустым, если пароля нет'} value={form.onec_password ?? ''} onChange={e => setForm(current => ({...current, onec_password: e.target.value}))}/>
+            </label>
+          </div>
+          <div className="setup-info">Если при открытии этой базы 1С просит выбрать пользователя, укажите здесь его точное имя. Это не учётная запись Windows.</div>
+
           <div className="setup-staging-card"><div><strong><ShieldCheck size={16}/> Создать чистую sandbox-базу автоматически</strong>
             <p>Рекомендуется. Harness не копирует рабочие данные: реальные данные читаются из основной базы, а sandbox используется только для безопасной проверки изменённой конфигурации.</p></div>
             <input type="checkbox" checked={autoSandbox} onChange={e => setAutoSandbox(e.target.checked)}/></div>
 
-          {!autoSandbox && <label className="setup-field"><span>Использовать существующую тестовую базу</span>
-            <select value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}>
-              <option value="">Не выбрано</option>
-              {discovery.infobases.filter(base => base.connection !== form.onec_ib_connection).map(base => <option key={base.connection} value={base.connection}>{base.name}</option>)}
-            </select>
-            <input placeholder='/F "C:\\1C\\staging" или /S "server\\staging"' value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}/>
-          </label>}
+          {!autoSandbox && <div className="setup-section-subtle">
+            <label className="setup-field"><span>Использовать существующую тестовую базу</span>
+              <select value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}>
+                <option value="">Не выбрано</option>
+                {discovery.infobases.filter(base => base.connection !== form.onec_ib_connection).map(base => <option key={base.connection} value={base.connection}>{base.name}</option>)}
+              </select>
+              <input placeholder='/F "C:\\1C\\staging" или /S "server\\staging"' value={form.onec_staging_ib_connection ?? ''} onChange={e => setValue('onec_staging_ib_connection', e.target.value)}/>
+            </label>
+            <div className="setup-auth-grid">
+              <label className="setup-field"><span>Пользователь staging</span><input value={form.onec_staging_user ?? ''} onChange={e => setValue('onec_staging_user', e.target.value)}/></label>
+              <label className="setup-field"><span>Пароль staging</span><input type="password" autoComplete="off" placeholder={settings.secrets.onec_staging_password ? 'Пароль уже сохранён' : ''} value={form.onec_staging_password ?? ''} onChange={e => setForm(current => ({...current, onec_staging_password: e.target.value}))}/></label>
+            </div>
+          </div>}
           <div className="setup-info">Реальные справочники, документы и регистры доступны AI через read-only COM. Запись данных в рабочую базу автономно отключена.</div>
         </div>}
 
