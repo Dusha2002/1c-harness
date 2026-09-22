@@ -75,9 +75,10 @@ def test_primary_auth_is_added_to_designer_command(tmp_path: Path) -> None:
     )
     command = Designer(settings)._base_command()
 
-    assert ["/N", "Admin"] == command[3:5]
+    assert "/N" in command
+    assert command[command.index("/N") + 1] == "Admin"
     assert "/P" in command
-    assert "secret" in command
+    assert command[command.index("/P") + 1] == "secret"
 
 
 def test_staging_auth_does_not_inherit_primary_credentials(tmp_path: Path) -> None:
