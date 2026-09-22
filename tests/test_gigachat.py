@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import ssl
 import sys
@@ -83,3 +84,72 @@ def test_real_windows_truststore_accepts_bundled_root() -> None:
     context = provider()._verify()
 
     assert context is not False
+
+
+def test_credentials_accept_basic_prefix_and_whitespace() -> None:
+    assert GigaChatProvider._normalized_credentials("  Basic abc123==\n") == "abc123=="
+    assert GigaChatProvider._normalized_credentials("Bearer abc123==") == "abc123=="
+
+
+def test_scope_candidates_try_configured_then_other_official_scopes() -> None:
+    client = provider(gigachat_scope="GIGACHAT_API_B2B")
+
+    assert client._scope_candidates() == [
+        "GIGACHAT_API_B2B",
+        "GIGACHAT_API_PERS",
+        "GIGACHAT_API_CORP",
+    ]
+
+
+def test_oauth_automatically_recovers_from_scope_mismatch(monkeypatch) -> None:
+    responses = [
+        httpx.Response(
+            400,
+            json={"code": 7, "message": "scope from db not fully includes consumed scope"},
+        ),
+        httpx.Response(
+            200,
+            json={"access_token": "token", "expires_at": 9999999999999},
+        ),
+    ]
+    posted_scopes: list[str] = []
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, data=None, json=None):
+            posted_scopes.append(data["scope"])
+            return responses.pop(0)
+
+    monkeypatch.setattr("onec_harness.providers.gigachat.httpx.AsyncClient", lambda **kwargs: FakeClient())
+    client = provider(gigachat_scope="GIGACHAT_API_PERS")
+    monkeypatch.setattr(client, "_verify", lambda: False)
+
+    token = asyncio.run(client._get_access_token())
+
+    assert token == "token"
+    assert posted_scopes == ["GIGACHAT_API_PERS", "GIGACHAT_API_B2B"]
+    assert client._resolved_scope == "GIGACHAT_API_B2B"
+
+
+def test_oauth_error_surfaces_gigachat_code_and_message(monkeypatch) -> None:
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, data=None, json=None):
+            return httpx.Response(400, json={"code": 4, "message": "Can't decode 'Authorization' header"})
+
+    monkeypatch.setattr("onec_harness.providers.gigachat.httpx.AsyncClient", lambda **kwargs: FakeClient())
+    client = provider()
+    monkeypatch.setattr(client, "_verify", lambda: False)
+
+    with pytest.raises(Exception, match="code=4"):
+        asyncio.run(client._get_access_token())
