@@ -240,7 +240,11 @@ class TestManagerRunner:
             raise TestClientError("ONEC_TEST_MANAGER_CONNECTION is required for E2E UI tests")
         self.compiler = ScenarioCompiler(settings.onec_test_host, settings.onec_test_port)
         self.launcher = TestClientLauncher(settings)
-        self.designer = Designer(settings, connection_override=settings.onec_staging_ib_connection)
+        self.designer = Designer(
+            settings,
+            connection_override=settings.onec_staging_ib_connection,
+            auth_kind="staging",
+        )
         self.package = ExternalScenarioPackage(workspace, self.compiler)
 
     def _wait_for_port(self, timeout: float) -> bool:
