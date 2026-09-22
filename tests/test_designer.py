@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from onec_harness.onec.designer import Designer
+import pytest
+
+from onec_harness.onec.designer import Designer, DesignerError
 from onec_harness.settings import Settings
 
 
@@ -119,3 +121,73 @@ def test_staging_auth_uses_its_own_credentials(tmp_path: Path) -> None:
 
     assert "SandboxUser" in command
     assert "sandbox-secret" in command
+
+
+def test_monitored_export_reports_progress(tmp_path: Path, monkeypatch) -> None:
+    designer = _designer(tmp_path)
+    designer.exe.write_bytes(b"fake")
+    progress: list[float] = []
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.returncode = None
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls >= 2:
+                self.returncode = 0
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr("onec_harness.onec.designer.subprocess.Popen", FakeProcess)
+
+    result = designer.dump_config(
+        tmp_path / "export",
+        execute=True,
+        progress=progress.append,
+        timeout_seconds=5,
+    )
+
+    assert result.ok
+    assert progress
+
+
+def test_monitored_export_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
+    designer = _designer(tmp_path)
+    designer.exe.write_bytes(b"fake")
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr("onec_harness.onec.designer.subprocess.Popen", FakeProcess)
+
+    with pytest.raises(DesignerError, match="отменена"):
+        designer.dump_config(
+            tmp_path / "export",
+            execute=True,
+            progress=lambda elapsed: None,
+            cancelled=lambda: True,
+            timeout_seconds=5,
+        )
