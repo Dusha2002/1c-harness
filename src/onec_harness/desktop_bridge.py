@@ -104,7 +104,7 @@ class DesktopService:
             raise ValueError('Сначала выгрузите конфигурацию основной базы в рабочее пространство')
 
         identity = connection_identity(self.settings.onec_ib_connection)
-        digest = hashlib.sha256(f'{identity[0]}:{identity[1]}'.encode('utf-8')).hexdigest()[:12]
+        digest = hashlib.sha256(f'{identity[0]}:{identity[1]}'.encode()).hexdigest()[:12]
         target_path = (
             Path(target).expanduser().resolve()
             if target
