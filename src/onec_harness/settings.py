@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     onec_staging_ib_connection: str = ""
     onec_user: str | None = None
     onec_password: str | None = None
+    onec_staging_user: str | None = None
+    onec_staging_password: str | None = None
     onec_workspace: Path = Field(default_factory=lambda: Path("workspace"))
     onec_command_timeout_seconds: float = 600.0
 
