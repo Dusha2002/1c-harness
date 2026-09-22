@@ -6,7 +6,9 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -169,6 +171,89 @@ class DesktopService:
             'mode': 'empty_sandbox',
             'primary_data_access': 'read_only',
         }
+
+    def export_sources(self) -> dict:
+        """Export primary configuration without exposing a half-written workspace."""
+        self.workspace.ensure_exists()
+        connection_identity(self.settings.onec_ib_connection)
+
+        visible = [item for item in self.workspace.root.iterdir() if item.name != '.onec-harness']
+        default_workspace = (config_root() / 'workspace').resolve()
+        recover_partial = (
+            bool(visible)
+            and self.workspace.root == default_workspace
+            and not self.workspace.baseline_root.exists()
+        )
+        if visible and not recover_partial:
+            raise ValueError(
+                'Рабочая папка уже содержит файлы. Выберите пустую папку или завершите review, '
+                'чтобы Harness не перезаписал существующие исходники.'
+            )
+
+        cancel_path = config_root() / 'cancel'
+        cancel_path.unlink(missing_ok=True)
+        config_root().mkdir(parents=True, exist_ok=True)
+        last_count_at = -10.0
+        last_count = 0
+
+        with tempfile.TemporaryDirectory(prefix='export-', dir=config_root()) as temp_dir:
+            export_root = Path(temp_dir) / 'sources'
+            export_root.mkdir(parents=True)
+
+            def progress(elapsed: float) -> None:
+                nonlocal last_count_at, last_count
+                if elapsed - last_count_at >= 2.0 or last_count_at < 0:
+                    last_count = sum(1 for path in export_root.rglob('*') if path.is_file())
+                    last_count_at = elapsed
+                seconds = int(elapsed)
+                self.emit({
+                    'type': 'operation_progress',
+                    'operation': 'export',
+                    'elapsed_seconds': round(elapsed, 1),
+                    'files': last_count,
+                    'message': (
+                        f'1С выгружает конфигурацию · {seconds // 60:02d}:{seconds % 60:02d} '
+                        f'· файлов: {last_count}'
+                    ),
+                })
+
+            result = Designer(self.settings).dump_config(
+                export_root,
+                execute=True,
+                progress=progress,
+                cancelled=cancel_path.exists,
+                timeout_seconds=max(self.settings.onec_command_timeout_seconds, 1800.0),
+            )
+            cancel_path.unlink(missing_ok=True)
+            if not result.ok:
+                raise ValueError(_friendly_onec_error(result.combined_output(), target='primary'))
+
+            exported = Workspace(export_root)
+            source_count = exported.source_count()
+            if source_count == 0:
+                raise ValueError('1С завершила выгрузку, но не создала XML/BSL исходники конфигурации')
+
+            # Only after a complete successful export do we replace a partial
+            # first-run export in the app-owned default workspace.
+            if recover_partial:
+                for item in visible:
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink(missing_ok=True)
+
+            for item in export_root.iterdir():
+                shutil.move(str(item), str(self.workspace.root / item.name))
+
+        self.workspace.capture_baseline()
+        self.emit({
+            'type': 'operation_progress',
+            'operation': 'export',
+            'elapsed_seconds': None,
+            'files': self.workspace.source_count(),
+            'message': 'Конфигурация выгружена',
+        })
+        return self.doctor()
 
     def skill_list(self) -> list[dict[str, Any]]:
         return [asdict(item) for item in self.skills.list()]
@@ -377,15 +462,7 @@ class DesktopService:
         if op in {'accept', 'reject'}:
             return self.decide(op)
         if op == 'export':
-            self.workspace.ensure_exists()
-            if any(self.workspace.root.iterdir()):
-                raise ValueError('Для выгрузки выберите пустую папку, чтобы сохранить существующие исходники')
-            connection_identity(self.settings.onec_ib_connection)
-            result = Designer(self.settings).dump_config(self.workspace.root, execute=True)
-            if not result.ok:
-                raise ValueError(_friendly_onec_error(result.combined_output(), target='primary'))
-            self.workspace.capture_baseline()
-            return self.doctor()
+            return self.export_sources()
         raise ValueError('Unknown desktop operation')
 
 
