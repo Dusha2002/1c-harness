@@ -35,7 +35,13 @@ class CommandResult:
 class Designer:
     """Auditable wrapper around 1cv8 DESIGNER batch commands."""
 
-    def __init__(self, settings: Settings, *, connection_override: str | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        connection_override: str | None = None,
+        use_primary_auth: bool = True,
+    ) -> None:
         self.settings = settings
         if settings.onec_exe is None:
             raise DesignerError("ONEC_EXE is not configured")
@@ -46,6 +52,8 @@ class Designer:
                 raise DesignerError(str(exc)) from exc
         self.exe = settings.onec_exe.expanduser()
         self.connection = settings.onec_ib_connection if connection_override is None else connection_override
+        self.user = settings.onec_user if use_primary_auth else None
+        self.password = settings.onec_password if use_primary_auth else None
         if not self.connection.strip():
             raise DesignerError("1C infobase connection is not configured")
 
@@ -68,10 +76,10 @@ class Designer:
     def _base_command(self) -> list[str]:
         command = [str(self.exe), "DESIGNER"]
         command.extend(self._split_args(self.connection))
-        if self.settings.onec_user:
-            command.extend(["/N", self.settings.onec_user])
-        if self.settings.onec_password:
-            command.extend(["/P", self.settings.onec_password])
+        if self.user:
+            command.extend(["/N", self.user])
+        if self.password:
+            command.extend(["/P", self.password])
         command.extend(["/DisableStartupMessages", "/DisableStartupDialogs"])
         return command
 
