@@ -172,6 +172,22 @@ class DesktopService:
             'primary_data_access': 'read_only',
         }
 
+    def test_primary_connection(self) -> dict:
+        """Fail fast on infobase authentication/COM problems before a long export."""
+        try:
+            connector = ComConnector(self.settings)
+            connector.connect()
+        except Exception as exc:
+            message = _friendly_onec_error(str(exc), target='primary')
+            if 'Cannot create V83.COMConnector' in str(exc) or 'cannot create v83.comconnector' in str(exc).casefold():
+                message = (
+                    'Не удалось запустить V83.COMConnector. Проверьте, что компонент COM-соединения '
+                    'установлен и зарегистрирован вместе с выбранной платформой 1С. '
+                    f'Подробности: {exc}'
+                )
+            raise ValueError(message) from exc
+        return {'message': 'Подключение к рабочей базе 1С успешно'}
+
     def export_sources(self) -> dict:
         """Export primary configuration without exposing a half-written workspace."""
         self.workspace.ensure_exists()
@@ -455,6 +471,8 @@ class DesktopService:
         if op == 'test_model':
             response = await create_provider(self.settings).complete([Message(role='user', content='Ответь одним словом: OK')])
             return {'message': response.content}
+        if op == 'test_onec_connection':
+            return self.test_primary_connection()
         if op == 'apply':
             return self.apply(request.get('confirmed') is True)
         if op == 'run':
