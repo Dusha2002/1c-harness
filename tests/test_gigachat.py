@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from onec_harness.providers.base import ProviderError
 from onec_harness.providers.gigachat import GigaChatProvider
 from onec_harness.providers.russian_trusted_ca import (
     RUSSIAN_TRUSTED_ROOT_CA_PEM,
@@ -151,5 +152,5 @@ def test_oauth_error_surfaces_gigachat_code_and_message(monkeypatch) -> None:
     client = provider()
     monkeypatch.setattr(client, "_verify", lambda: False)
 
-    with pytest.raises(Exception, match="code=4"):
+    with pytest.raises(ProviderError, match="code=4"):
         asyncio.run(client._get_access_token())
