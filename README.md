@@ -16,8 +16,8 @@ The first-run wizard auto-detects installed 1C platforms and registered infobase
 and performs model testing plus initial source export without editing configuration files.
 
 1. On first launch the guided setup opens immediately. Searching installed 1C platforms and registered infobases starts only when you press the corresponding search button.
-2. Choose the primary base. For a file infobase, Harness can create a separate staging copy automatically; server users can select an existing staging base.
-3. Choose the AI provider, model and credential. Windows stores secrets with DPAPI. Native pickers are available for 1C, base and workspace paths.
+2. Choose the primary base. Harness reads the user's real data there through read-only COM runtime tools. By default it creates a separate empty local sandbox for code/configuration checks instead of copying the working data files.
+3. If changed code must be tested against a full copy of real business data, disable the automatic sandbox and select an existing test copy explicitly. Primary runtime writes remain disabled.
 4. Harness tests the model, exports the XML/BSL configuration sources and stores a Git-free source baseline automatically.
 5. Describe a task. Tool progress is streamed. The agent reads metadata and sources before proposing changes. The code/review pane can be resized horizontally or collapsed entirely.
 6. Review **all files** in the selector. Accept keeps source changes; reject restores the pre-task bytes, including BOM/CRLF.
