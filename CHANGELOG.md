@@ -1,5 +1,8 @@
 # v0.5 development preview
 
+- Bundled and fingerprint-pinned the official Russian Trusted Root CA required by GigaChat, so users do not need to install it into Windows manually.
+- GigaChat TLS now combines the Windows system trust store, the pinned Ministry root, and any optional user-supplied CA bundle while keeping certificate verification enabled.
+
 - GigaChat HTTPS now uses the native Windows certificate trust store by default, fixing self-signed-chain failures caused by trusted antivirus/corporate TLS interception and Windows-only root CAs.
 - Custom GigaChat PEM/CRT CA bundles still take precedence; TLS verification is never disabled automatically.
 
