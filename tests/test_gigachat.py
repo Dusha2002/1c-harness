@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from onec_harness.providers.gigachat import GigaChatProvider
 from onec_harness.providers.russian_trusted_ca import (
@@ -75,3 +76,10 @@ def test_windows_tls_error_is_actionable(monkeypatch) -> None:
     assert "Russian Trusted Root CA" in message
     assert "Windows trust store" in message
     assert "not disabled automatically" in message
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows truststore integration")
+def test_real_windows_truststore_accepts_bundled_root() -> None:
+    context = provider()._verify()
+
+    assert context is not False
