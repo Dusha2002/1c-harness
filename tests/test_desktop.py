@@ -419,5 +419,5 @@ def test_friendly_onec_auth_error_points_to_primary_credentials() -> None:
         target='primary',
     )
 
-    assert 'Пользователь ИБ' in message
+    assert 'пользователя ИБ' in message
     assert 'пароль' in message
