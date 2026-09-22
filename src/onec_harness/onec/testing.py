@@ -60,7 +60,11 @@ class TestClientLauncher:
             require_test_connection(self.settings.onec_ib_connection, connection)
         except ValueError as exc:
             raise TestClientError(str(exc)) from exc
-        command = self._enterprise_command(connection, self.settings.onec_user, self.settings.onec_password)
+        command = self._enterprise_command(
+            connection,
+            self.settings.onec_staging_user,
+            self.settings.onec_staging_password,
+        )
         command.extend(["/TestClient", f"-TPort{self.settings.onec_test_port}"])
         if self.settings.onec_test_client_id:
             command.append(f"-TestClientID{self.settings.onec_test_client_id}")

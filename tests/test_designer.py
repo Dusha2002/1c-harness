@@ -63,3 +63,59 @@ def test_create_file_infobase_command_is_isolated_from_primary_connection(tmp_pa
     assert any(part.startswith('File="') for part in result.command)
     assert "/F" not in result.command
     assert "C:\\demo" not in result.command
+
+
+def test_primary_auth_is_added_to_designer_command(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        onec_exe=tmp_path / "1cv8.exe",
+        onec_ib_connection='/F "C:\\demo"',
+        onec_user="Admin",
+        onec_password="secret",
+    )
+    command = Designer(settings)._base_command()
+
+    assert "/N" in command
+    assert command[command.index("/N") + 1] == "Admin"
+    assert "/P" in command
+    assert command[command.index("/P") + 1] == "secret"
+
+
+def test_staging_auth_does_not_inherit_primary_credentials(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        onec_exe=tmp_path / "1cv8.exe",
+        onec_ib_connection='/F "C:\\primary"',
+        onec_staging_ib_connection='/F "C:\\staging"',
+        onec_user="PrimaryUser",
+        onec_password="primary-secret",
+    )
+    command = Designer(
+        settings,
+        connection_override=settings.onec_staging_ib_connection,
+        auth_kind="staging",
+    )._base_command()
+
+    assert "PrimaryUser" not in command
+    assert "primary-secret" not in command
+    assert "/N" not in command
+    assert "/P" not in command
+
+
+def test_staging_auth_uses_its_own_credentials(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        onec_exe=tmp_path / "1cv8.exe",
+        onec_ib_connection='/F "C:\\primary"',
+        onec_staging_ib_connection='/F "C:\\staging"',
+        onec_staging_user="SandboxUser",
+        onec_staging_password="sandbox-secret",
+    )
+    command = Designer(
+        settings,
+        connection_override=settings.onec_staging_ib_connection,
+        auth_kind="staging",
+    )._base_command()
+
+    assert "SandboxUser" in command
+    assert "sandbox-secret" in command

@@ -1,5 +1,9 @@
 # v0.5 development preview
 
+- Added explicit primary infobase user/password fields to first-run setup and separate staging credentials.
+- Designer, checks, Test Client and E2E now keep primary and staging authentication isolated; auto-sandbox no longer inherits the working database user.
+- The common 1C error “Пользователь ИБ не идентифицирован” is translated into actionable setup guidance.
+
 - GigaChat OAuth now normalizes pasted Authorization Keys, including accidental `Basic `/`Bearer ` prefixes and whitespace.
 - OAuth errors now include GigaChat's own code/message instead of a generic HTTP 400.
 - Scope mismatches automatically retry the documented PERS/B2B/CORP scopes; setup/settings also expose the scope explicitly.

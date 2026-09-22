@@ -35,7 +35,13 @@ class CommandResult:
 class Designer:
     """Auditable wrapper around 1cv8 DESIGNER batch commands."""
 
-    def __init__(self, settings: Settings, *, connection_override: str | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        connection_override: str | None = None,
+        auth_kind: str = "primary",
+    ) -> None:
         self.settings = settings
         if settings.onec_exe is None:
             raise DesignerError("ONEC_EXE is not configured")
@@ -46,6 +52,17 @@ class Designer:
                 raise DesignerError(str(exc)) from exc
         self.exe = settings.onec_exe.expanduser()
         self.connection = settings.onec_ib_connection if connection_override is None else connection_override
+        if auth_kind == "primary":
+            self.user = settings.onec_user
+            self.password = settings.onec_password
+        elif auth_kind == "staging":
+            self.user = settings.onec_staging_user
+            self.password = settings.onec_staging_password
+        elif auth_kind == "none":
+            self.user = None
+            self.password = None
+        else:
+            raise DesignerError(f"Unknown 1C authentication kind: {auth_kind}")
         if not self.connection.strip():
             raise DesignerError("1C infobase connection is not configured")
 
@@ -68,10 +85,10 @@ class Designer:
     def _base_command(self) -> list[str]:
         command = [str(self.exe), "DESIGNER"]
         command.extend(self._split_args(self.connection))
-        if self.settings.onec_user:
-            command.extend(["/N", self.settings.onec_user])
-        if self.settings.onec_password:
-            command.extend(["/P", self.settings.onec_password])
+        if self.user:
+            command.extend(["/N", self.user])
+        if self.password:
+            command.extend(["/P", self.password])
         command.extend(["/DisableStartupMessages", "/DisableStartupDialogs"])
         return command
 
