@@ -353,3 +353,51 @@ def test_bridge_server_handles_multiple_requests_without_restart(tmp_path: Path)
     finally:
         process.terminate()
         process.wait(timeout=5)
+
+
+def test_prepare_staging_creates_empty_sandbox_and_loads_config(service, monkeypatch, tmp_path) -> None:
+    from onec_harness.onec.designer import CommandResult
+
+    primary = '/F "C:\\RealData"'
+    service.settings.onec_ib_connection = primary
+    service.settings.onec_exe = tmp_path / '1cv8.exe'
+    service.settings.onec_exe.write_bytes(b'')
+    service.workspace.write_text('Configuration.xml', '<MetaDataObject/>')
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDesigner:
+        def __init__(self, settings, connection_override=None):
+            self.connection_override = connection_override
+
+        def create_file_infobase(self, target, execute=False):
+            calls.append(('create', str(target)))
+            target.mkdir(parents=True, exist_ok=True)
+            (target / '1Cv8.1CD').write_bytes(b'sandbox')
+            return CommandResult(command=[], returncode=0, executed=True)
+
+        def load_config(self, source, **kwargs):
+            calls.append(('load', self.connection_override or 'primary'))
+            return CommandResult(command=[], returncode=0, executed=True)
+
+    monkeypatch.setattr(desktop_bridge, 'Designer', FakeDesigner)
+    result = service.prepare_staging(str(tmp_path / 'sandbox'))
+
+    assert result['mode'] == 'empty_sandbox'
+    assert result['primary_data_access'] == 'read_only'
+    assert calls[0][0] == 'create'
+    assert calls[1][0] == 'load'
+    assert calls[1][1] == result['connection']
+    assert 'RealData' not in result['path']
+
+
+def test_runtime_data_access_stays_on_primary_connection(service) -> None:
+    service.settings.onec_ib_connection = '/F "C:\\UserData"'
+    service.settings.onec_staging_ib_connection = '/F "C:\\Sandbox"'
+
+    from onec_harness.onec.com import derive_com_connection_string
+
+    connection = derive_com_connection_string(service.settings)
+
+    assert 'UserData' in connection
+    assert 'Sandbox' not in connection
